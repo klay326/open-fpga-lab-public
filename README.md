@@ -62,6 +62,11 @@ firmware/
   led-chase/               -- bare-metal RISC-V firmware for the LiteX SoC above
 cm4/                       -- CM4 integration: scripts + notes for pairing a
                               Raspberry Pi CM4 with the FPGA (see its README)
+tapeout/
+  tt-ijtag-faulthunt/      -- Tiny Tapeout GF180 chip (TTGF26c, 1x2 tiles): 1149.1 TAP +
+                              IEEE 1687 SIB network hosting a fault-injectable ALU
+                              ("Fault Hunt"), LFSR/MISR BIST and a ring-oscillator bank
+                              (see its README)
 ```
 
 ### FPGA-only demos (`fpga/`)
