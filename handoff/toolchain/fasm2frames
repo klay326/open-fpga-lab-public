@@ -1,0 +1,2 @@
+#!/bin/bash
+exec /opt/openxc7/venv/bin/python3 /home/kladams/Projects/toolchain-installer/prjxray/utils/fasm2frames.py "$@"

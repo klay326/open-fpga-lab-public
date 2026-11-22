@@ -1,0 +1,30 @@
+PACKAGES=libc libcompiler_rt libbase libfatfs liblitespi liblitedram libliteeth liblitesdcard liblitesata bios
+PACKAGE_DIRS=/home/kladams/Projects/litex/litex/litex/soc/software/libc /home/kladams/Projects/litex/litex/litex/soc/software/libcompiler_rt /home/kladams/Projects/litex/litex/litex/soc/software/libbase /home/kladams/Projects/litex/litex/litex/soc/software/libfatfs /home/kladams/Projects/litex/litex/litex/soc/software/liblitespi /home/kladams/Projects/litex/litex/litex/soc/software/liblitedram /home/kladams/Projects/litex/litex/litex/soc/software/libliteeth /home/kladams/Projects/litex/litex/litex/soc/software/liblitesdcard /home/kladams/Projects/litex/litex/litex/soc/software/liblitesata /home/kladams/Projects/litex/litex/litex/soc/software/bios
+LIBS=libc libcompiler_rt libbase libfatfs liblitespi liblitedram libliteeth liblitesdcard liblitesata
+ALWAYS_LINK_LIBS=
+TRIPLE=riscv64-linux-gnu
+CPU=vexriscv
+CPUFAMILY=riscv
+CPUFLAGS=-march=rv32i2p0_m     -mabi=ilp32 -D__vexriscv__
+CPUENDIANNESS=little
+CLANG=0
+CPU_DIRECTORY=/home/kladams/Projects/litex/litex/litex/soc/cores/cpu/vexriscv
+SOC_DIRECTORY=/home/kladams/Projects/litex/litex/litex/soc
+PICOLIBC_DIRECTORY=/home/kladams/Projects/litex/pythondata-software-picolibc/pythondata_software_picolibc/data
+PICOLIBC_FORMAT=integer
+LIBC_MODE=minimal
+COMPILER_RT_DIRECTORY=/home/kladams/Projects/litex/pythondata-software-compiler_rt/pythondata_software_compiler_rt/data
+export BUILDINC_DIRECTORY
+BUILDINC_DIRECTORY=/home/kladams/Projects/litex/build-qmtech-k7-cm4/build/qmtech_kintex7_devboard/software/include
+LIBC_DIRECTORY=/home/kladams/Projects/litex/litex/litex/soc/software/libc
+LIBCOMPILER_RT_DIRECTORY=/home/kladams/Projects/litex/litex/litex/soc/software/libcompiler_rt
+LIBBASE_DIRECTORY=/home/kladams/Projects/litex/litex/litex/soc/software/libbase
+LIBFATFS_DIRECTORY=/home/kladams/Projects/litex/litex/litex/soc/software/libfatfs
+LIBLITESPI_DIRECTORY=/home/kladams/Projects/litex/litex/litex/soc/software/liblitespi
+LIBLITEDRAM_DIRECTORY=/home/kladams/Projects/litex/litex/litex/soc/software/liblitedram
+LIBLITEETH_DIRECTORY=/home/kladams/Projects/litex/litex/litex/soc/software/libliteeth
+LIBLITESDCARD_DIRECTORY=/home/kladams/Projects/litex/litex/litex/soc/software/liblitesdcard
+LIBLITESATA_DIRECTORY=/home/kladams/Projects/litex/litex/litex/soc/software/liblitesata
+BIOS_DIRECTORY=/home/kladams/Projects/litex/litex/litex/soc/software/bios
+LTO=0
+BIOS_CONSOLE_FULL=1

@@ -1,0 +1,14 @@
+=== git status (qmtech-k7-riscv-computer) ===
+On branch master
+Your branch is up to date with 'origin/master'.
+
+nothing to commit, working tree clean
+
+=== git diff (staged + unstaged) ===
+
+=== last 5 commits ===
+73f6fbf Add macOS replication guide for the holiday break
+591610b Root-cause the CM4-UART regression: firmware/header mismatch, not timing
+87f6142 Document the CM4 UART regression, revert to the stable build path
+5bdcd31 Add CM4 UART link (built, flashed, and confirmed on real hardware)
+c3f98a6 Add the actual 8086 assembly source for the x86 interpreter test program
