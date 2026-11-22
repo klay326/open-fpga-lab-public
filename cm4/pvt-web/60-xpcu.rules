@@ -1,0 +1,4 @@
+# Xilinx Platform Cable USB and the Waveshare clone (03fd:0013 before and after
+# firmware upload; 03fd:0008 for genuine cables after upload).
+SUBSYSTEM=="usb", ATTR{idVendor}=="03fd", ATTR{idProduct}=="0013", MODE="0660", GROUP="plugdev"
+SUBSYSTEM=="usb", ATTR{idVendor}=="03fd", ATTR{idProduct}=="0008", MODE="0660", GROUP="plugdev"

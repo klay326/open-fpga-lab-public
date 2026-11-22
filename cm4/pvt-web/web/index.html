@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>FPGA Die Monitor</title>
+<meta name="description" content="Live die temperature, supply voltages and ring-oscillator speeds from a Kintex-7 FPGA in a homelab.">
+<style>
+:root{--bg:#f5f4f0;--card:#ffffff;--fg:#1b1b19;--mut:#6c6b65;--line:#e4e2db;--acc:#c2410c;--acc2:#2563eb;--ok:#15803d;--warn:#b45309}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#121211;--card:#1c1c1a;--fg:#ecebe6;--mut:#9b9a93;--line:#2f2e2a;--acc:#fb923c;--acc2:#60a5fa;--ok:#4ade80;--warn:#fbbf24}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif}
+main{max-width:1000px;margin:0 auto;padding:28px 16px 48px}
+header{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:8px 16px;margin-bottom:20px}
+h1{font-size:22px;margin:0;letter-spacing:-.01em}
+.sub{color:var(--mut);margin:2px 0 0}
+.live{display:inline-flex;align-items:center;gap:6px;font-size:13px;color:var(--mut)}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--mut)}
+.dot.on{background:var(--ok);box-shadow:0 0 0 0 var(--ok);animation:p 2s infinite}
+@keyframes p{0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--ok) 60%,transparent)}100%{box-shadow:0 0 0 8px transparent}}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px}
+.lbl{font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:var(--mut)}
+.val{font-size:34px;font-weight:650;font-variant-numeric:tabular-nums;letter-spacing:-.02em;margin-top:2px}
+.val small{font-size:16px;font-weight:500;color:var(--mut);margin-left:2px}
+.hero .val{font-size:56px;color:var(--acc)}
+.note{font-size:13px;color:var(--mut)}
+.chart{margin-top:12px}
+.chart-head{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:8px;margin-bottom:8px}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.seg button{background:none;border:0;color:var(--mut);padding:5px 12px;font:inherit;font-size:13px;cursor:pointer}
+.seg button.on{background:var(--fg);color:var(--bg)}
+canvas{width:100%;height:260px;display:block;touch-action:pan-y}
+#tip{font-size:13px;color:var(--mut);min-height:20px;font-variant-numeric:tabular-nums}
+table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums;font-size:14px}
+th{font-weight:500;color:var(--mut);text-align:left;font-size:12px;text-transform:uppercase;letter-spacing:.05em;padding:4px 0}
+td{padding:6px 0;border-top:1px solid var(--line)}td:not(:first-child),th:not(:first-child){text-align:right}
+.two{display:grid;grid-template-columns:1.2fr 1fr;gap:12px;margin-top:12px}
+@media (max-width:720px){.two{grid-template-columns:1fr}.hero .val{font-size:46px}}
+.about p{margin:0 0 8px;font-size:14px}.about p:last-child{margin:0}
+footer{margin-top:20px;font-size:12px;color:var(--mut)}
+</style></head>
+<body><main>
+<header>
+ <div><h1>FPGA Die Monitor</h1><p class="sub">A Xilinx Kintex-7 XC7K325T on the homelab bench, live.</p></div>
+ <span class="live"><span class="dot" id="dot"></span><span id="ago">connecting…</span></span>
+</header>
+
+<div class="grid">
+ <div class="card hero"><div class="lbl">Die temperature</div><div class="val" id="temp">--</div><div class="note" id="tsrc">&nbsp;</div></div>
+ <div class="card"><div class="lbl">VCCINT (core)</div><div class="val" id="vint">--</div><div class="note">nominal 1.00 V</div></div>
+ <div class="card"><div class="lbl">VCCAUX</div><div class="val" id="vaux">--</div><div class="note">nominal 1.80 V</div></div>
+ <div class="card"><div class="lbl">Range today</div><div class="val" id="range">--</div><div class="note" id="rangen">min / max, last 24 h</div></div>
+</div>
+
+<div class="card chart">
+ <div class="chart-head"><div class="lbl">Temperature history</div>
+  <div class="seg" id="seg"><button data-h="1">1 h</button><button data-h="24" class="on">24 h</button><button data-h="168">7 d</button><button data-h="720">30 d</button></div></div>
+ <canvas id="ch" aria-label="Die temperature history chart" role="img"></canvas>
+ <div id="tip">&nbsp;</div>
+</div>
+
+<div class="two">
+ <div class="card"><div class="lbl" style="margin-bottom:6px">Ring oscillators</div>
+  <table><thead><tr><th>Location on die</th><th>MHz</th></tr></thead><tbody id="ros"><tr><td colspan="2" class="note">waiting for data…</td></tr></tbody></table>
+  <p class="note" style="margin:10px 0 0" id="heat"></p>
+ </div>
+ <div class="card about"><div class="lbl" style="margin-bottom:6px">What this is</div>
+  <p>The temperature and supply voltages come from the FPGA's built-in XADC monitor, read over JTAG by the Raspberry Pi CM4 sitting next to it.</p>
+  <p>The ring oscillators are five free-running loops of logic gates placed in the corners and middle of the die. How fast they run depends on the silicon, the core voltage and the temperature, so they double as on-chip sensors.</p>
+  <p>Built with a fully open-source FPGA toolchain (yosys, nextpnr-xilinx, Project X-Ray).</p>
+ </div>
+</div>
+<footer>Read-only. Updates every 5 s; history is stored every 10 s.</footer>
+</main>
+<script>
+const $=id=>document.getElementById(id);
+const LOC=['bottom-left','bottom-right','centre','top-left','top-right'];
+let hours=24,hist=null,last=0;
+const fmt=(v,d)=>v==null?'--':v.toFixed(d);
+function css(n){return getComputedStyle(document.documentElement).getPropertyValue(n).trim()}
+
+async function now(){
+ try{
+  const n=await (await fetch('/api/now',{cache:'no-store'})).json();last=Date.now();
+  $('temp').innerHTML=n.temp_c==null?'--':fmt(n.temp_c,1)+'<small>°C</small>';
+  $('tsrc').textContent=n.temp_source==='xadc'?'XADC on-die sensor':n.temp_source==='ro'?'estimated from ring oscillators':'no temperature source right now';
+  $('vint').innerHTML=n.vccint_v==null?'--':fmt(n.vccint_v,3)+'<small>V</small>';
+  $('vaux').innerHTML=n.vccaux_v==null?'--':fmt(n.vccaux_v,3)+'<small>V</small>';
+  $('ros').innerHTML=n.ro_mhz?n.ro_mhz.map((f,k)=>`<tr><td>ro${k} · ${LOC[k]}</td><td>${f.toFixed(2)}</td></tr>`).join('')
+   :'<tr><td colspan="2" class="note">no ring-oscillator stream right now</td></tr>';
+  $('heat').textContent=n.heater?((n.heater.heater_duty?`On-chip heater running at ${Math.round(n.heater.heater_duty/2.55)}% duty.`:'On-chip heater idle.')
+   +(n.heater.alarms&&n.heater.alarms.length?` Alarms: ${n.heater.alarms.join(', ')}.`:'')):'';
+  const ok=n.temp_c!=null||n.ro_mhz;$('dot').className='dot'+(ok?' on':'');
+ }catch(e){$('dot').className='dot'}
+}
+function ago(){const s=Math.round((Date.now()-last)/1000);$('ago').textContent=last?(s<3?'live':`updated ${s}s ago`):'connecting…'}
+
+async function history(){
+ try{hist=await (await fetch('/api/history?h='+hours,{cache:'no-store'})).json();draw();if(hours===24)range()}catch(e){}
+}
+async function range(){
+ const h=hours===24?hist:await (await fetch('/api/history?h=24')).json();
+ const ts=h.rows.map(r=>r[1]).filter(v=>v!=null);
+ $('range').innerHTML=ts.length?`${Math.min(...ts).toFixed(1)}<small>–</small>${Math.max(...ts).toFixed(1)}<small>°C</small>`:'--';
+}
+let pts=[];
+function draw(){
+ const c=$('ch'),r=devicePixelRatio||1,W=c.clientWidth,H=c.clientHeight;c.width=W*r;c.height=H*r;
+ const g=c.getContext('2d');g.scale(r,r);pts=[];
+ if(!hist||!hist.rows.length){g.fillStyle=css('--mut');g.font='13px system-ui';g.fillText('No history yet',8,24);return}
+ const rows=hist.rows.filter(x=>x[1]!=null),t1=Date.now()/1000,t0=t1-hours*3600;
+ if(!rows.length){g.fillStyle=css('--mut');g.font='13px system-ui';g.fillText('No temperature in this range',8,24);return}
+ let lo=Math.min(...rows.map(x=>x[1])),hi=Math.max(...rows.map(x=>x[1]));
+ const pad=Math.max(1,(hi-lo)*.15);lo=Math.floor(lo-pad);hi=Math.ceil(hi+pad);
+ const L=38,R=8,T=10,B=24,X=t=>L+(t-t0)/(t1-t0)*(W-L-R),Y=v=>T+(hi-v)/(hi-lo)*(H-T-B);
+ g.font='11px system-ui';g.fillStyle=css('--mut');g.strokeStyle=css('--line');g.lineWidth=1;
+ const step=Math.max(1,Math.ceil((hi-lo)/5));
+ for(let v=Math.ceil(lo/step)*step;v<=hi;v+=step){const y=Math.round(Y(v))+.5;g.beginPath();g.moveTo(L,y);g.lineTo(W-R,y);g.stroke();g.fillText(v+'°',4,y+4)}
+ const nt=W<500?3:6;for(let i=0;i<=nt;i++){const t=t0+(t1-t0)*i/nt,d=new Date(t*1000);
+  const s=hours<=24?d.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}):d.toLocaleDateString([],{month:'short',day:'numeric'});
+  const w=g.measureText(s).width;g.fillText(s,Math.min(Math.max(X(t)-w/2,L),W-R-w),H-6)}
+ const acc=css('--acc'),gap=hist.step_s*3;
+ const grad=g.createLinearGradient(0,T,0,H-B);grad.addColorStop(0,acc+'55');grad.addColorStop(1,acc+'00');
+ let seg=[];const segs=[];for(let i=0;i<rows.length;i++){if(i&&rows[i][0]-rows[i-1][0]>gap){segs.push(seg);seg=[]}seg.push(rows[i])}segs.push(seg);
+ for(const s of segs){if(!s.length)continue;
+  g.beginPath();s.forEach((p,i)=>i?g.lineTo(X(p[0]),Y(p[1])):g.moveTo(X(p[0]),Y(p[1])));
+  g.lineTo(X(s[s.length-1][0]),H-B);g.lineTo(X(s[0][0]),H-B);g.closePath();g.fillStyle=grad;g.fill();
+  g.beginPath();s.forEach((p,i)=>i?g.lineTo(X(p[0]),Y(p[1])):g.moveTo(X(p[0]),Y(p[1])));g.strokeStyle=acc;g.lineWidth=2;g.stroke()}
+ pts=rows.map(p=>({x:X(p[0]),y:Y(p[1]),t:p[0],v:p[1],vi:p[2]}));
+}
+function tip(e){
+ if(!pts.length)return;const b=$('ch').getBoundingClientRect(),x=(e.touches?e.touches[0].clientX:e.clientX)-b.left;
+ let best=pts[0];for(const p of pts)if(Math.abs(p.x-x)<Math.abs(best.x-x))best=p;
+ const d=new Date(best.t*1000);draw();const g=$('ch').getContext('2d');
+ g.fillStyle=css('--acc');g.beginPath();g.arc(best.x,best.y,4,0,7);g.fill();
+ $('tip').textContent=`${d.toLocaleString([],{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'})} · ${best.v.toFixed(2)} °C`+(best.vi!=null?` · VCCINT ${best.vi.toFixed(3)} V`:'');
+}
+$('ch').addEventListener('mousemove',tip);$('ch').addEventListener('touchmove',tip,{passive:true});
+$('ch').addEventListener('mouseleave',()=>{$('tip').innerHTML='&nbsp;';draw()});
+$('seg').onclick=e=>{const b=e.target.closest('button');if(!b)return;hours=+b.dataset.h;
+ for(const x of $('seg').children)x.classList.toggle('on',x===b);history()};
+addEventListener('resize',draw);
+now();history();setInterval(now,5000);setInterval(ago,1000);setInterval(history,60000);
+</script>
+</body></html>

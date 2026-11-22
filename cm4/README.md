@@ -112,6 +112,12 @@ CM4 side as done: `enable_uart=1` + `dtoverlay=disable-bt` in
 `ttyAMA0`, PL011 on GPIO14/15. No pyserial on the Pi; `cm4_link.py` needs
 `sudo apt install python3-serial`.
 
+### First use: live die monitor
+
+`pvt-web/` runs on the CM4 and publishes the FPGA's die temperature, supplies
+and ring-oscillator data at https://fpga.klayshomelab.com (read-only). See
+`pvt-web/README.md`.
+
 ### Files here
 
 - `cm4_link.py` -- minimal pyserial passthrough to the FPGA's console over

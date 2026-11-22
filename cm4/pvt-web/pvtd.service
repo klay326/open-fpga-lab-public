@@ -1,0 +1,29 @@
+[Unit]
+Description=FPGA die-temperature sampler and read-only web page (cm4/pvt-web)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=pvtd
+Group=pvtd
+SupplementaryGroups=dialout plugdev
+ExecStart=/usr/bin/python3 -I /opt/pvtd/pvtd.py --web /opt/pvtd/web --db /var/lib/pvtd/pvt.db --calib-ro 1
+StateDirectory=pvtd
+Restart=always
+RestartSec=5
+# Read-only service: nothing but its own database is writable.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+[Install]
+WantedBy=multi-user.target
