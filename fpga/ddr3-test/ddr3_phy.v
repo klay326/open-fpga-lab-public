@@ -113,10 +113,14 @@ module ddr3_phy #(
     // slots (CS#=1 but RAS#/CAS#/WE# still carrying the slot's ACT/RD/WR
     // opcode) would execute as real commands -- the DRAM never initialized.
     // Make every deselected slot a NOP. Harmless where CS# is wired.
-    // QMTech: ISERDES CLKB source. Default: the PLL 180-degree clock (what a
-    // fabric !i_ddr3_clk becomes). With `make CLKB_SAME=1`, CLKB is the same
-    // clock as CLK: tests whether the 7-series ILOGIC inverts CLKB internally
-    // (prjxray has no CLKB inversion feature; Vivado always ties CLKB = ~CLK).
+    // QMTech: ISERDES CLKB source. On the board (verified 2026-11-22), CLKB must
+    // be driven from the SAME clock as CLK: the 7-series ILOGIC inverts CLKB
+    // internally (Vivado always ties CLKB to CLK's net; prjxray has no CLKB
+    // inversion feature). With CLKB from the PLL 180-degree clock, the
+    // inversion brings it back to 0 degrees, both samples land on one edge, a
+    // toggling DQS reads as a constant, and read calibration never locks.
+    // `make` default is CLKB_SAME=1. The simulation models CLKB literally, so
+    // sim/run.sh uses the 180-degree clock (no QMTECH_CLKB_SAME there).
 `ifdef QMTECH_CLKB_SAME
     wire iserdes_clkb = i_ddr3_clk;
 `else

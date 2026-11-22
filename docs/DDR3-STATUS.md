@@ -1,10 +1,32 @@
 # DDR3 on the open flow: status (2026-11-22)
 
-**Short version:** DDR3 works on this board with Vivado's MIG (QMTech's test
-bitstream, flashed from the Mac, calibrates and passes). The open flow now
-*builds* a LiteX DDR3 SoC (with a newer prjxray-db), but it does **not run**. This isn't a Mac vs Omarchy difference. Both hosts produce identical
-results for the same tool versions. What changed is the prjxray-db
-version, not the OS.
+> **WORKING (2026-11-22, 16:35): open-flow DDR3 on the QMTech K7, no LiteX,
+> no Vivado.** `fpga/ddr3-test` (upstream UberDDR3 + QMTech patches) reaches
+> DONE_CALIBRATE on its first attempt, including a full-memory BIST, and
+> `test.py` passes **260/260** random-order write/read round trips (0 wrong,
+> 0 timeouts). Bitstream as tested: `handoff/bitstreams/ddr3-test-uberddr3.bit`.
+>
+> What it took, in the order found:
+> 1. **CS# is tied low on the board**, so the controller's deselected command
+>    slots executed as ACT/RD/WR. Gate them to NOPs in the PHY.
+> 2. **CK forwarded through an ODDR was flat.** An ODDR in an HP IOI tile only
+>    drives D1 in this flow. Generate CK with an OSERDES.
+> 3. **Current upstream UberDDR3.** The openXC7 demo copy fails write
+>    calibration even in simulation.
+> 4. **ISERDES CLKB must come from the same clock as CLK.** The ILOGIC inverts
+>    CLKB internally. With CLKB from the PLL's 180-degree clock, both samples
+>    land on one edge, DQS reads as a constant (`00000011_11111100...` for
+>    every IDELAY tap) and read calibration never locks. This is likely also
+>    behind the LiteX DDR3 failures: check how s7ddrphy drives CLKB.
+> 5. Plus: VREF 0.75 V, MIG's HP-bank glue bits and LVCMOS15 drive
+>    (`fasm_fixup.py`); the 180-degree clock instead of fabric `!clk` for OSERDES
+>    CLK (fasm2frames rejects the inverted IMUX); the nextpnr SING-tile OFB
+>    patch (moot now: upstream skips the loopback); and the UART bridge holding
+>    requests across refresh stalls.
+>
+> Open-flow bugs worth reporting upstream: (2) ODDR D2 dead in HP IOI;
+> (4) CLKB inversion not modelled in prjxray/nextpnr; VREF ignores
+> `INTERNAL_VREF`; partial LVCMOS15 drive feature; no DCI in prjxray-db.
 
 ## Why it failed on Omarchy
 

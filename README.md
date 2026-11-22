@@ -16,6 +16,9 @@ Raspberry Pi Compute Module 4 to build a small heterogeneous computer -- an
 ARM Linux side (the CM4) and a RISC-V side (synthesized into the FPGA fabric),
 talking to each other.
 
+**DDR3 works on the open flow** (2026-11-22): `fpga/ddr3-test` calibrates
+and passes a 260/260 write/read round trip. See `docs/DDR3-STATUS.md`.
+
 Setting this up on a Mac? See [`MACOS-SETUP.md`](MACOS-SETUP.md) -- the
 verified native recipe (toolchain built from pinned commits, bit-identical
 output to the Linux build, JTAG flashing included).
