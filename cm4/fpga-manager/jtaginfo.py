@@ -1,8 +1,9 @@
 """Read-only JTAG facts about the FPGA, shared by fpga-flash and fpga_manager.py.
 
-Everything here only READS: --detect (IDCODE), --read-dna, and
+Everything here only READS: --detect (IDCODE) and
 --read-register STAT, which sends a sync word plus one type-1 read packet over
-CFG_IN and shifts the answer out of CFG_OUT. Nothing is written to the
+CFG_IN and shifts the answer out of CFG_OUT. (--read-dna is not used: openFPGALoader 2aafd90 refuses it on the
+K7 with "read_dna only supported for 7-series style Xilinx FPGA".) Nothing is written to the
 configuration logic, so a running design is not disturbed. The caller must hold
 the board (fpga-queue) or otherwise own the cable, as for any JTAG access.
 """
@@ -45,10 +46,6 @@ def read(ofl, firmware, freq=1500000):
                 d[k] = m.group(1)
         if "idcode" not in d:
             errs.append("detect: " + (out.strip().splitlines() or ["no output"])[-1][:120])
-        out = _run(base, ["--read-dna"])
-        m = re.search(r"dna[^\n]*?(0x[0-9a-fA-F]{8,})", out, re.I)
-        if m:
-            d["dna"] = m.group(1).lower()
         out = _run(base, ["--read-register", "STAT"])
         m = re.search(r"raw value:\s*(0x[0-9a-fA-F]+)", out)
         if m:

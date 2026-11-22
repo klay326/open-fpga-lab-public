@@ -108,6 +108,26 @@ Cut-over (once): stage the Mac's `~/.fpga-board/{holder,queue,log}` and install
 with `MIGRATE_QUEUE=<dir>`, then write the `remote` file in the same minute.
 Remove the file to go back to a Mac-local queue.
 
+## JTAG status panel (read-only)
+
+`jtaginfo.py` runs `openFPGALoader --detect` and `--read-register STAT`. The
+STAT read is a sync word plus one read packet; nothing is written to the
+configuration logic, so a running design isn't disturbed. The page shows the
+model, IDCODE and the decoded STAT bits (DONE, INIT_B, INIT complete, EOS,
+GWE, GTS_CFG_B, MMCM lock, DCI match, CRC/ID/decrypt errors, XADC
+over-temperature, startup state, bus width), plus 30 min of die temperature
+and VCCINT.
+
+- **when:** right after every flash (fpga-flash, holding the queue), and every
+  60 s while the manager watches a non-playground project
+- **history:** from pvtd's `/api/now` while the playground runs (pvtd owns the
+  cable then), else from the manager's own XADC reads
+- **on the board, 2026-11-22:** IDCODE `0x3651093` (xc7k325t), STAT
+  `0x401079fc` (DONE 1, EOS 1, startup state 4, no errors). `--read-dna` is
+  refused by this openFPGALoader build on the K7, so DNA isn't shown.
+
+There is no interactive JTAG on the page.
+
 ## Auth and limits
 
 - One or more accounts in `/etc/fpga-manager/users.json` (root:fpgamgr 0640),

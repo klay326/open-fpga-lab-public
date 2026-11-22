@@ -183,7 +183,7 @@ try:
     time.sleep(3)
     ok(status()["xadc"] and abs(status()["xadc"]["temp_c"] - 40.5) < 0.01, "XADC watched while trng is loaded")
     j = status()["jtag"]
-    ok(j and j["idcode"] == "0x3651093" and j["model"] == "xc7k325t" and j["dna"] == "0x0123456789abcdef"
+    ok(j and j["idcode"] == "0x3651093" and j["model"] == "xc7k325t"
        and j["stat"]["done"] == 1 and j["stat"]["eos"] == 1 and j["stat"]["crc_error"] == 0, "JTAG status read after flash and decoded")
     time.sleep(10.5)
     ok(any(h[4] == "manager" and abs(h[1] - 40.5) < 0.01 for h in status()["hist"]), "temperature history from the watchdog")

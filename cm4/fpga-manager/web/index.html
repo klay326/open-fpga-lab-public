@@ -198,7 +198,7 @@ function spark(pts,i,unit,dec,lo,hi){
 function renderJtag(){
   const j=S.jtag,H=S.hist||[],el=$("jtag");let h="";
   if(j){
-    h+=`<div class="kv">${esc(j.model||"?")} <span class="mute">(${esc(j.family||"")})</span> · IDCODE <code>${esc(j.idcode||"?")}</code>${j.dna?` · DNA <code>${esc(j.dna)}</code>`:""}
+    h+=`<div class="kv">${esc(j.model||"?")} <span class="mute">(${esc(j.family||"")})</span> · IDCODE <code>${esc(j.idcode||"?")}</code>
       <span class="mute"> · read ${ago(j.t)} ago, ${esc(j.by||"")}</span></div>`;
     if(j.stat){
       h+=`<div class="kv" style="margin-top:4px">STAT <code>${esc(j.stat_raw)}</code> <span class="mute">· startup state ${j.stat.startup_state} · mode ${j.stat.mode} · bus x${[1,8,16,32][j.stat.bus_width]}</span></div><div class="bits">`+

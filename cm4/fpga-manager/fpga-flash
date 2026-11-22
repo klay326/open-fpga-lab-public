@@ -220,7 +220,7 @@ def load(p, st):
     if not ok:
         return False, msg
     set_job(st, step="read status " + p["id"])
-    p["_jtag"] = jtaginfo.read(CONF["ofl"], CONF["firmware"])   # read-only: IDCODE, DNA, STAT
+    p["_jtag"] = jtaginfo.read(CONF["ofl"], CONF["firmware"])   # read-only: IDCODE, STAT
     p["_jtag"]["by"] = "after flash"
     if p.get("owner") == "pvtd":
         pvtd_up()                             # pvtd does its own checks, keepalives, reloads
