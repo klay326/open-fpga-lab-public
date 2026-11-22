@@ -35,8 +35,10 @@ def mhz_to_count(mhz):
 
 # ------------------------------------------------------------------ XADC (JTAG)
 def read_xadc(freq=1500000):
-    cmd = [OFL if os.path.exists(OFL) else "openFPGALoader", "-c", "xilinxPlatformCableUsb",
-           "--freq", str(freq), "--probe-firmware", FIRMWARE, "--read-xadc"]
+    cmd = [OFL if os.path.exists(OFL) else "openFPGALoader", "-c", "xilinxPlatformCableUsb", "--freq", str(freq)]
+    if os.path.exists(FIRMWARE):      # not shipped in the public copy of the repo
+        cmd += ["--probe-firmware", FIRMWARE]
+    cmd += ["--read-xadc"]
     try:
         out = subprocess.run(cmd, capture_output=True, text=True, timeout=30).stdout
         d = json.loads(re.sub(r",\s*}", "}", out[out.find("{"):out.rfind("}") + 1]))
