@@ -10,6 +10,10 @@ Raspberry Pi Compute Module 4 to build a small heterogeneous computer -- an
 ARM Linux side (the CM4) and a RISC-V side (synthesized into the FPGA fabric),
 talking to each other.
 
+Setting this up on a Mac? See [`MACOS-SETUP.md`](MACOS-SETUP.md) first --
+there's one real platform blocker (no macOS build of the JTAG flashing
+tool) worth planning around before anything else.
+
 ## Board
 
 - QMTech XC7K325T Kintex-7 core board on their Development Board carrier
