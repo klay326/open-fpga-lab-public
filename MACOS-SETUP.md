@@ -15,7 +15,8 @@ no new cable:
   the Linux build (`handoff/bitstreams/fpga-blinky.bit`); only the 9-byte
   date/time in the `.bit` header differs.
 - **JTAG**: the Waveshare Platform Cable USB clone works with
-  openFPGALoader 1.2.0 plus a 6-line patch (`tools/openfpgaloader/`).
+  openFPGALoader plus the fix in upstream PR
+  [trabucayre/openFPGALoader#772](https://github.com/trabucayre/openFPGALoader/pull/772) (`tools/openfpgaloader/`).
   `make program` flashes a full K325T bitstream in 20 s at 12 MHz TCK.
 
 The old "blocker" (Vivado Lab has no macOS build, cable incompatible with
@@ -143,8 +144,7 @@ cd fpga/blinky && make && make program
 ## Flashing (openFPGALoader, patched)
 
 ```bash
-openFPGALoader -c xilinxPlatformCableUsb --probe-firmware none \
-    --freq 12000000 --bitstream <file>.bit
+openFPGALoader -c xilinxPlatformCableUsb --freq 12000000 --bitstream <file>.bit
 ```
 (`make program` in any `fpga/*` project runs exactly this.) Success ends
 with `ir: 1 isc_done 1 isc_ena 0 init 1 done 1`. `done 0` means the
@@ -163,8 +163,11 @@ bitstream didn't load -- check JTAG/power before retrying. 12 MHz takes
   `xusb_xp2.hex` over the FX2 `0xA0` load request -- which this clone ACKs
   and ignores (RAM readback is junk, the device never re-enumerates) --
   then waits 100 s for 0008 and fails with `FX2: fail to open device`.
-- `tools/openfpgaloader/xpcu-skip-firmware.patch` adds
-  `--probe-firmware none`: open 0013 directly, skip the upload.
+- `tools/openfpgaloader/xpcu-detect-preloaded-firmware.patch` (upstream PR
+  [trabucayre/openFPGALoader#772](https://github.com/trabucayre/openFPGALoader/pull/772),
+  same issue as #730) sends XPCU GET_VERSION first. A bare FX2 can't answer,
+  so if the cable replies, the driver skips the upload and opens 0013 directly.
+  No extra flag needed.
 - The original Linux failure (openFPGALoader 1.1.1) used `--board
   qmtechKintex7`, which selects **no** cable driver (it falls back to a
   direct FT2232 interface). It was never a JTAG shift-protocol problem.

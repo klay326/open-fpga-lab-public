@@ -1,7 +1,8 @@
 # DDR3 on the open flow: status (2026-11-22)
 
-**Short version:** it now *builds* (with a newer prjxray-db) but does **not
-run**. This isn't a Mac vs Omarchy difference. Both hosts produce identical
+**Short version:** DDR3 works on this board with Vivado's MIG (QMTech's test
+bitstream, flashed from the Mac, calibrates and passes). The open flow now
+*builds* a LiteX DDR3 SoC (with a newer prjxray-db), but it does **not run**. This isn't a Mac vs Omarchy difference. Both hosts produce identical
 results for the same tool versions. What changed is the prjxray-db
 version, not the OS.
 
@@ -81,18 +82,36 @@ bits overlap real routing PIPs, and nextpnr setting them in 20 extra
 `INT_R_X95` tiles turns on 20 stray routing connections. That's the best
 explanation for the CPU corruption so far.
 
-`ddr3-fixed.bit` is the nextpnr DDR3 `.fasm` (100 MHz build) with the 66
-over-applied lines dropped: everything except the one tile and one site
-Vivado sets. It hasn't been flashed yet.
+**Hardware results (2026-11-22):**
+
+- **The Vivado MIG example passes on this board.** The user LEDs are active-low
+  (3V3 → 1K → LED → FPGA pin). D2 (R26, `init_calib_complete`) is off, so
+  calibration is done. D3 (P26, `tg_compare_error`) is lit, so there are no
+  errors. D7 (N26, unused) glows faintly from Vivado's default pull-down. So
+  the DDR3 chip, the board wiring and the JTAG flow are all fine. The problem
+  is in the open toolchain.
+- **Removing the over-applied bits doesn't help.** `ddr3-fixed.bit` is the
+  nextpnr DDR3 `.fasm` (100 MHz) with the 66 extra `OBUF_CASCADE_Y1` /
+  `OBUF_HP_BANK_GLUE` lines dropped. It fails exactly like the original: banner,
+  then a `spurious irq 3` flood (2,098 lines in 45 s). The over-application is
+  real, but it isn't what breaks the CPU, so the hypothesis below is
+  **refuted** for those two features.
 
 ## Next experiments, cheapest first
 
-1. **Strip-and-flash:** regenerate the DDR3 `.frames` with the 42 `INT_R.IOB_COL_*`
-   lines removed from the `.fasm` (keep the RIOB18 bits). If the CPU then
-   boots cleanly and only SDRAM init fails, the INT_R mirror is the culprit.
-2. Same build with the CPU and BIOS forced far away from the X95 column
+1. ~~Strip the over-applied mirrored bits~~: done, no change (see above).
+   Next is a **full Vivado-vs-nextpnr diff of the whole DDR3 PHY region**
+   (`RIOI`/`HCLK_IOI` tiles: OSERDES/ISERDES/IDELAY/ODELAY/IDELAYCTRL/DCI
+   features), not just the five mirrored features. The CPU fails at
+   interrupt enable, before any DDR access, which points at something
+   global, e.g. clocking (`HCLK_IOI`, BUFR/BUFIO) or IDELAYCTRL/DCI. Something
+   that disturbs the sys clock domain fits that better than local IO bits do.
+2. A LiteX DDR3 build with the SDRAM controller kept but the PHY outputs
+   tied off, to bisect whether the PHY's IO, clocking or the CRG is what
+   corrupts the CPU.
+3. Same build with the CPU and BIOS forced far away from the X95 column
    (pblock-style placement constraints), to see whether the corruption is local.
-3. Get ground truth for those bits: a Vivado-generated DDR3 bitstream for this
+4. ~~Get ground truth~~ (done, see above): a Vivado-generated DDR3 bitstream for this
    board (QMTech ships one: `handoff/board-docs/.../Test04_DDR3_mig_7series_*.zip`)
    → `bit2fasm` → compare the `INT_R_X95*` / `RIOB18` features against the
    mirrored ones. That gives the real Kintex-7 answer and is worth upstreaming.

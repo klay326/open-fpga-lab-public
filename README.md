@@ -35,16 +35,16 @@ Note: as of writing, the installer script doesn't correctly build `yosys`
 Python side (needed for `fasm2frames`) -- see git history / commit notes in
 this repo for the exact workarounds if you hit the same issues.
 
-**Flashing:** openFPGALoader v1.2.0 plus a 6-line patch
+**Flashing:** openFPGALoader plus the fix from upstream PR
+[trabucayre/openFPGALoader#772](https://github.com/trabucayre/openFPGALoader/pull/772)
 (`tools/openfpgaloader/build.sh`), then `make program`:
 ```bash
-openFPGALoader -c xilinxPlatformCableUsb --probe-firmware none \
-    --freq 12000000 --bitstream <file>.bit
+openFPGALoader -c xilinxPlatformCableUsb --freq 12000000 --bitstream <file>.bit
 ```
 The JTAG cable (Waveshare Xilinx Platform Cable USB clone, `03fd:0013`)
 already runs its own XPCU firmware; stock openFPGALoader tries to upload
-firmware it ignores and then times out. The patch's `--probe-firmware none`
-skips that. (Earlier notes here blamed the cable's JTAG protocol -- that was
+firmware it ignores and then times out. The fix detects the running firmware and
+skips the upload. (Earlier notes here blamed the cable's JTAG protocol -- that was
 openFPGALoader 1.1.1 run with `--board`, which selects no cable driver. See
 `MACOS-SETUP.md`.) Vivado Lab (`vivado_lab -mode batch -source flash.tcl`,
 with `connect_hw_server -allow_non_jtag`) still works on x86 Linux as a
