@@ -74,6 +74,11 @@ module ddr3_phy #(
         // DDR3 I/O Interface
         inout wire[DUAL_RANK_DIMM:0] o_ddr3_clk_p,o_ddr3_clk_n, // QMTech: inout for pad read-back (o_ck_probe)
         output wire o_ck_probe,
+        // QMTech debug: actual IDELAY taps (CNTVALUEOUT) and the last value the
+        // controller loaded, to check that VAR_LOAD tap loads take effect
+        output wire[LANES*5-1:0] o_dbg_idelay_dqs_cnt,
+        output wire[4:0] o_dbg_idelay_dq0_cnt,
+        output reg[4:0] o_dbg_idelay_dqs_cmd,
         output wire o_ddr3_reset_n,
         output wire[DUAL_RANK_DIMM:0] o_ddr3_cke, // CKE
         output wire[DUAL_RANK_DIMM:0] o_ddr3_cs_n, // chip select signal
@@ -107,6 +112,11 @@ module ddr3_phy #(
     // slots (CS#=1 but RAS#/CAS#/WE# still carrying the slot's ACT/RD/WR
     // opcode) would execute as real commands -- the DRAM never initialized.
     // Make every deselected slot a NOP. Harmless where CS# is wired.
+    // QMTech debug: IDELAY tap read-back
+    wire[(DQ_BITS*LANES)*5-1:0] dbg_idelay_dq_cnt;
+    assign o_dbg_idelay_dq0_cnt = dbg_idelay_dq_cnt[4:0];
+    initial o_dbg_idelay_dqs_cmd = 0;
+    always @(posedge i_controller_clk) if (i_controller_idelay_dqs_ld[0]) o_dbg_idelay_dqs_cmd <= i_controller_idelay_dqs_cntvaluein;
     wire[cmd_len*serdes_ratio-1:0] cmd_gated;
     genvar gs;
     generate for (gs = 0; gs < serdes_ratio; gs = gs + 1) begin : g_cmd_gate
@@ -742,7 +752,7 @@ module ddr3_phy #(
                 .SIGNAL_PATTERN("DATA") //DATA, CLOCK input signal
             )
             IDELAYE2_data (
-                .CNTVALUEOUT(), // 5-bit output: Counter value output
+                .CNTVALUEOUT(dbg_idelay_dq_cnt[gen_index*5 +: 5]), // QMTech debug
                 .DATAOUT(idelay_data[gen_index]), // 1-bit output: Delayed data output
                 .C(i_controller_clk), // 1-bit input: Clock input
                 .CE(1'b0), // 1-bit input: Active high enable increment/decrement input
@@ -1235,7 +1245,7 @@ module ddr3_phy #(
                 .SIGNAL_PATTERN("CLOCK") //DATA, CLOCK input signal
             )
             IDELAYE2_dqs (
-                .CNTVALUEOUT(), // 5-bit output: Counter value output
+                .CNTVALUEOUT(o_dbg_idelay_dqs_cnt[gen_index*5 +: 5]), // QMTech debug
                 .DATAOUT(idelay_dqs[gen_index]), // 1-bit output: Delayed data output
                 .C(i_controller_clk), // 1-bit input: Clock input
                 .CE(1'b0), // 1-bit input: Active high enable increment/decrement input

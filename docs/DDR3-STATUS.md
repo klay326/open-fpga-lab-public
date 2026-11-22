@@ -233,10 +233,15 @@ the UART).
   So the sampling point isn't moving.
 - Ruled out: the ISERDES input mux. nextpnr emits `IFFDELMUXE3.P0`, which per
   prjxray fuzzer 035 is the IDELAY path, correct for `IOBDELAY="IFD"`.
+- **Tap loads do work (checked 16:28).** The IDELAYs' `CNTVALUEOUT` now
+  reads back over the UART (`%`/`&` DQS lane 0/1, `+` DQ0, `*` last
+  commanded; `fpga/ddr3-test/idelay_check.py`). Over 20 s of calibration,
+  lane-0 DQS and DQ0 swept all 32 taps, following the commanded value. Lane 1
+  stayed at its initial tap 9 (it's only trained after lane 0 passes). So the
+  sampling point moves about 2.5 ns and the DQS capture still never changes.
 - **Next suspects**, in order:
-  1. IDELAY tap loads not taking effect (VAR_LOAD `LD`/`CNTVALUEIN` routing
-     or bits). Check: bring `CNTVALUEOUT` of the DQS IDELAY out on the UART.
-  2. Both ISERDES samples taken on the same edge (CLKB from the 180-degree
+  1. ~~IDELAY tap loads not taking effect~~: ruled out, see above.
+  2. **Now the leading suspect.** Both ISERDES samples taken on the same edge (CLKB from the 180-degree
      BUFG not acting as the opposite edge), which would turn a toggling DQS
      into a constant at a fixed phase. Same family of bug as the dead D2
      half of the ODDR.

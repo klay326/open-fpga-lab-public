@@ -82,6 +82,9 @@ module qmtech_ddr3 (
     wire [31:0] o_debug2, o_debug3;
     wire        calib_complete;
     wire        bridge_tx, cal_dbg_tx;
+    // IDELAY tap read-back: '%' DQS lane0 actual, '&' DQS lane1 actual,
+    // '*' last commanded DQS tap, '+' DQ0 actual (all 0..31)
+    wire [9:0]  dbg_dqs_cnt; wire [4:0] dbg_dq0_cnt, dbg_dqs_cmd;
     reg  [63:0] rd_snap = 0;      // read_lane_data at first entry to state 14 since '#'
     reg         rd_snap_valid = 0;
     reg  [2:0]  rd_ptr = 0;       // '[' -> next snapshot byte (LSB first), ']' -> rewind
@@ -124,6 +127,11 @@ module qmtech_ddr3 (
             dbg_valid <= 1; dbg_data <= rd_snap[8*rd_ptr +: 8]; rd_ptr <= rd_ptr + 1'b1;
         end else if (m_axis_tvalid && rd_data == 8'h5D) begin       // ']'
             dbg_valid <= 1; dbg_data <= {7'd0, rd_snap_valid}; rd_ptr <= 0;
+        end else if (m_axis_tvalid && (rd_data == 8'h25 || rd_data == 8'h26 || rd_data == 8'h2A || rd_data == 8'h2B)) begin
+            dbg_valid <= 1;
+            dbg_data  <= rd_data == 8'h25 ? {3'd0, dbg_dqs_cnt[4:0]} :
+                         rd_data == 8'h26 ? {3'd0, dbg_dqs_cnt[9:5]} :
+                         rd_data == 8'h2A ? {3'd0, dbg_dqs_cmd}      : {3'd0, dbg_dq0_cnt};
         end else if (m_axis_tvalid && rd_data == 8'h21) begin       // '!'
             dbg_valid <= 1; dbg_data <= 8'h40 + {3'd0, max_state};
         end else if (m_axis_tvalid && rd_data == 8'h24) begin       // '$'
@@ -254,6 +262,7 @@ module qmtech_ddr3 (
         .io_ddr3_dq(ddr3_dq), .io_ddr3_dqs(ddr3_dqs_p), .io_ddr3_dqs_n(ddr3_dqs_n),
         .o_ddr3_dm(ddr3_dm), .o_ddr3_odt(o_odt),
         .o_calib_complete(calib_complete),
+        .o_dbg_idelay_dqs_cnt(dbg_dqs_cnt), .o_dbg_idelay_dq0_cnt(dbg_dq0_cnt), .o_dbg_idelay_dqs_cmd(dbg_dqs_cmd),
         .o_debug1(o_debug1),
         .i_user_self_refresh(1'b0),
         .uart_tx(cal_dbg_tx)

@@ -104,6 +104,8 @@ module ddr3_top #(
         // DDR3 I/O Interface
         inout wire[DUAL_RANK_DIMM:0] o_ddr3_clk_p, o_ddr3_clk_n,
         output wire o_ck_probe, // QMTech: CK pad read-back
+        output wire[BYTE_LANES*5-1:0] o_dbg_idelay_dqs_cnt, // QMTech debug: IDELAY taps
+        output wire[4:0] o_dbg_idelay_dq0_cnt, o_dbg_idelay_dqs_cmd,
         output wire o_ddr3_reset_n,
         output wire[DUAL_RANK_DIMM:0] o_ddr3_cke, // CKE
         output wire[DUAL_RANK_DIMM:0] o_ddr3_cs_n, // chip select signal
@@ -379,6 +381,8 @@ ddr3_top #(
                 .o_ddr3_clk_p(o_ddr3_clk_p),
                 .o_ddr3_clk_n(o_ddr3_clk_n),
                 .o_ck_probe(o_ck_probe),
+                .o_dbg_idelay_dqs_cnt(o_dbg_idelay_dqs_cnt), .o_dbg_idelay_dq0_cnt(o_dbg_idelay_dq0_cnt),
+                .o_dbg_idelay_dqs_cmd(o_dbg_idelay_dqs_cmd),
                 .o_ddr3_reset_n(o_ddr3_reset_n),
                 .o_ddr3_cke(o_ddr3_cke), // CKE
                 .o_ddr3_cs_n(o_ddr3_cs_n), // chip select signal
@@ -435,6 +439,8 @@ ddr3_top #(
                 .o_ddr3_clk_p(o_ddr3_clk_p),
                 .o_ddr3_clk_n(o_ddr3_clk_n),
                 .o_ck_probe(o_ck_probe),
+                .o_dbg_idelay_dqs_cnt(o_dbg_idelay_dqs_cnt), .o_dbg_idelay_dq0_cnt(o_dbg_idelay_dq0_cnt),
+                .o_dbg_idelay_dqs_cmd(o_dbg_idelay_dqs_cmd),
                 .o_ddr3_reset_n(o_ddr3_reset_n),
                 .o_ddr3_cke(o_ddr3_cke), // CKE
                 .o_ddr3_cs_n(o_ddr3_cs_n), // chip select signal
