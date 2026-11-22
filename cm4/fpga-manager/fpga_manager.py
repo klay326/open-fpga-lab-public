@@ -170,11 +170,18 @@ class Manager:
                 [dict(name=x[0], since=x[1] if len(x) > 1 else "", what=x[2] if len(x) > 2 else "") for x in q],
                 log)
 
-    def pvtd_active(self):
+    def pvtd_active(self, max_age=2.0):
+        # cached: the proxied /api/now is polled every second by every open page
+        now = time.time()
+        c = getattr(self, "_pvtd", None)
+        if c and now - c[1] < max_age:
+            return c[0]
         try:
-            return subprocess.run([self.a.systemctl, "is-active", "--quiet", "pvtd"], timeout=10).returncode == 0
+            v = subprocess.run([self.a.systemctl, "is-active", "--quiet", "pvtd"], timeout=10).returncode == 0
         except (OSError, subprocess.TimeoutExpired):
-            return False
+            v = False
+        self._pvtd = (v, now)
+        return v
 
     def note(self, msg):
         self.events.appendleft(dict(t=time.time(), msg=msg))
@@ -265,6 +272,7 @@ class Manager:
         res = {0: "loaded", 3: "failed, fell back to the playground", 4: "FAILED, board state unknown",
                10: "board busy", 2: "refused"}.get(rc, "exit %d" % rc)
         self.note("switch to %s: %s" % (pid, res))
+        self._pvtd = None                     # pvtd may have stopped/started
         with self.lock:
             self.job = None
             self.last_result = dict(target=pid, rc=rc, result=res, output=out, t=time.time())
@@ -375,7 +383,7 @@ class Manager:
         for x in cat["projects"]:
             pub.append({k: x.get(k) for k in ("id", "name", "description", "uarts", "owner")})
             pub[-1]["panel"] = (x.get("panel") or {}).get("type")
-            pub[-1]["sha256"] = x["sha256"][:12]
+            pub[-1]["sha256"] = x["sha256"][:12] if x.get("sha256") else "pvtd's file"
         panel = None
         if self.tail and self.tail_for == p:
             panel = dict(lines=[[t, s] for t, s in list(self.tail.lines)[-60:]], err=self.tail.err,

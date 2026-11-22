@@ -27,8 +27,13 @@ def ok(cond, what):
 for d in ("store", "run", "queue", "etc"):
     os.makedirs(os.path.join(T, d))
 cat = json.load(open(os.path.join(FM, "catalog.json")))
+os.makedirs(os.path.join(T, "pvtd-share"))
 for p in cat["projects"]:                      # fake bitstreams, real hashes of them
     b = secrets.token_bytes(4096)
+    if p.get("file"):                          # the playground: pvtd's own file, trusted by owner
+        p["file"] = os.path.join(T, "pvtd-share", "playground.bit")
+        open(p["file"], "wb").write(b)
+        continue
     open(os.path.join(T, "store", p["id"] + ".bit"), "wb").write(b)
     p["sha256"] = hashlib.sha256(b).hexdigest()
     if p.get("health", {}).get("type") == "uart_line":
@@ -42,7 +47,7 @@ conf = dict(catalog=os.path.join(T, "etc", "catalog.json"), store=os.path.join(T
             state=os.path.join(T, "state.json"), run_dir=os.path.join(T, "run"),
             ofl=os.path.join(HERE, "fake-ofl"), firmware="/nonexistent", freqs=[6000000, 1500000],
             queue=os.path.join(REPO, "tools", "fpga-queue"), systemctl=os.path.join(HERE, "fake-systemctl"),
-            serial_map={"/dev/serial0": slave_name})
+            serial_map={"/dev/serial0": slave_name}, trusted_uid=os.getuid(), trust_root=T)
 json.dump(conf, open(os.path.join(T, "conf.json"), "w"))
 pw = secrets.token_urlsafe(12)
 sys.path.insert(0, FM)
@@ -236,6 +241,14 @@ try:
     s = wait_idle()
     ok(s["loaded"] == "playground" and s["by"] == "watchdog", "85 C -> fell back to playground")
     os.unlink(os.path.join(T, "temp"))
+
+    # 6b. a group-writable playground file is refused
+    os.chmod(os.path.join(T, "pvtd-share", "playground.bit"), 0o664)
+    time.sleep(1.1)
+    req("POST", "/manager/api/switch", {"project": "playground"}, cookie=ck)
+    s = wait_idle()
+    ok(s["last_result"]["rc"] == 2, "writable playground.bit refused")
+    os.chmod(os.path.join(T, "pvtd-share", "playground.bit"), 0o644)
 
     # 7. rate limit
     time.sleep(1.1)

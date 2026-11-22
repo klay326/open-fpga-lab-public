@@ -30,6 +30,8 @@ python3 -I - "$HERE/bitstreams" /var/lib/fpga-manager/bitstreams /etc/fpga-manag
 import hashlib, json, os, shutil, sys
 src, dst, cat = sys.argv[1:4]
 for p in json.load(open(cat))["projects"]:
+    if p.get("file"):
+        print("ok      %-16s uses %s (%s)" % (p["id"], p["file"], "present" if os.path.exists(p["file"]) else "MISSING")); continue
     s, d = os.path.join(src, p["id"] + ".bit"), os.path.join(dst, p["id"] + ".bit")
     for f in (s, d):
         if os.path.exists(f) and hashlib.sha256(open(f, "rb").read()).hexdigest() == p["sha256"]:

@@ -16,6 +16,8 @@ repo, catp, stage, mode = sys.argv[1:5]
 cat = json.load(open(catp)); bad = 0
 os.makedirs(os.path.join(stage, "bitstreams"))
 for p in cat["projects"]:
+    if p.get("file"):
+        print("skip    %-16s flashed from %s on the Pi (pvt-web installs it)" % (p["id"], p["file"])); continue
     src = os.path.join(repo, p["source"])
     h = hashlib.sha256(open(src, "rb").read()).hexdigest()
     if h != p["sha256"]:

@@ -46,13 +46,21 @@ the board with the heater. To add or update a project:
    `catalog.json`, copies the bitstreams to `/var/lib/fpga-manager/bitstreams/<id>.bit`
    and reinstalls. Commit `catalog.json`, which pins exactly which build is allowed.
 
+**One exception: the playground.** It's flashed from pvtd's own
+`/usr/local/share/pvtd/playground.bit`, not from a pinned copy. pvt-web's
+`install.sh` replaces that file on purpose (and restarts the RO calibration),
+and pvtd already reloads it by itself, so a second copy would drift. Instead of
+a hash, `fpga-flash` requires the file and every directory above it to be
+root-owned and not group- or world-writable (`"trust": "root-owned"`), and it
+records the hash it flashed in `state.json` and the queue note.
+
 Without `--rehash`, `publish.sh` stops if any source no longer matches its
 catalogued hash, so a rebuild can't slip in by accident. `install.sh` checks
 the hashes again on the Pi, and `fpga-flash` checks them before every flash.
 
 | id | what it speaks | where the CM4 can see it | panel / health |
 |---|---|---|---|
-| `playground` | pvt_lab lines + K keepalive on serial0 115200; TRNG on ttyAMA3 1 Mbaud | both | pvtd's own page; pvtd does keepalives, XADC, reloads |
+| `playground` (pvtd's file) | pvt_lab lines + K keepalive on serial0 115200; TRNG on ttyAMA3 1 Mbaud | both | pvtd's own page; pvtd does keepalives, XADC, reloads |
 | `pvt-lab` | pvt_lab v4 on JP5 115200; status mirrored A15 -> serial0 | serial0 (RX only) | UART tail; no `R ...` line for 3x30 s -> fallback |
 | `trng` | raw bits on JP5 1 Mbaud | no | info |
 | `litex-cm4-uart` | LiteX BIOS console on serial0 115200 (+ JP5) | serial0 | UART tail |
@@ -133,5 +141,5 @@ playground at `/`, proxied. That's a public change, so it hasn't been made.
 python3 -I cm4/fpga-manager/test/run_mock.py                       # Pi
 ```
 
-33 checks: auth, CSRF, rate limits, hash tamper, busy queue, the pvtd flag,
+34 checks: auth, CSRF, rate limits, hash tamper, busy queue, the pvtd flag,
 watchdog fallbacks (silent UART, 85 °C, failed flash), proxying. No hardware is touched.

@@ -37,6 +37,7 @@ CONF = {
     "systemctl": "/usr/bin/systemctl",
     "pvtd_unit": "pvtd",
     "serial_map": {},
+    "trusted_uid": 0,
 }
 # Tests only: sudo resets the environment, so this can't be set via the web path.
 if os.environ.get("FPGA_MANAGER_CONF"):
@@ -55,7 +56,33 @@ def load_catalog():
 
 
 def bit_path(p):
-    return os.path.join(CONF["store"], p["id"] + ".bit")
+    return p.get("file") or os.path.join(CONF["store"], p["id"] + ".bit")
+
+
+def verify(p):
+    """(ok, sha256 or reason). Catalogued projects must match their pinned hash.
+    The playground is the one exception ("trust": "root-owned"): it is pvtd's own
+    /usr/local/share/pvtd/playground.bit, which pvt-web's install.sh replaces on
+    purpose and pvtd already reloads by itself; it must be root-owned and not
+    writable by anyone else, all the way up."""
+    path = bit_path(p)
+    if not os.path.isfile(path):
+        return False, "bitstream for %s not installed" % p["id"]
+    h = sha256(path)
+    if p.get("trust") == "root-owned":
+        stop = CONF.get("trust_root", "/")          # tests only: stop at the temp dir
+        d = path
+        while True:
+            st = os.stat(d)
+            if st.st_uid != CONF["trusted_uid"] or st.st_mode & 0o022:
+                return False, "%s is not root-owned and write-protected: refusing" % d
+            if d in (stop, "/"):
+                break
+            d = os.path.dirname(d)
+        return True, h
+    if h != p["sha256"]:
+        return False, "SHA-256 mismatch for %s: refusing to flash" % p["id"]
+    return True, h
 
 
 def sha256(path):
@@ -180,10 +207,10 @@ def load(p, st):
     """Hash-check, flash and check one project. Returns (ok, message)."""
     path = bit_path(p)
     set_job(st, step="hash " + p["id"])
-    if not os.path.exists(path):
-        return False, "bitstream for %s not installed" % p["id"]
-    if sha256(path) != p["sha256"]:
-        return False, "SHA-256 mismatch for %s: refusing to flash" % p["id"]
+    ok, h = verify(p)
+    if not ok:
+        return False, h
+    p["_sha"] = h
     pvtd_down()                               # its XADC polling would collide with the flash
     set_job(st, step="flash " + p["id"])
     ok, msg = flash(path)
@@ -214,8 +241,9 @@ def switch(pid, who):
         return 10
     target, fb = byid[pid], byid[cat["fallback"]]
     # refuse early on a bad hash, before taking the board
-    if not os.path.exists(bit_path(target)) or sha256(bit_path(target)) != target["sha256"]:
-        print("refused: %s's bitstream is missing or its SHA-256 doesn't match the catalog" % pid, file=sys.stderr)
+    ok, why = verify(target)
+    if not ok:
+        print("refused: " + why, file=sys.stderr)
         return 2
     qn = CONF["queue_name"]
     queue("join", qn, "web switch to %s (by %s)" % (pid, who))
@@ -242,13 +270,13 @@ def switch(pid, who):
             loaded, result, rc = None, "failed", 4
         st = read_state()
         st.pop("job", None)
-        st.update(project=loaded, sha256=byid[loaded]["sha256"] if loaded else None,
+        st.update(project=loaded, sha256=byid[loaded].get("_sha") if loaded else None,
                   since=time.time(), by=who, result=result, message=msg)
         st.setdefault("history", []).insert(0, dict(t=time.time(), target=pid, loaded=loaded, by=who,
                                                     result=result, message=msg, secs=round(time.time() - t0, 1)))
         del st["history"][50:]
         write_state(st)
-        note = ("web-flasher: loaded %s (%s)" % (loaded, byid[loaded]["sha256"][:8]) if loaded
+        note = ("web-flasher: loaded %s (%s)" % (loaded, (byid[loaded].get("_sha") or "?")[:8]) if loaded
                 else "web-flasher: FLASH FAILED, board state unknown, pvtd %s" % ("down" if os.path.exists(FLAG) else "up"))
         print(json.dumps(dict(result=result, loaded=loaded, message=msg)))
     finally:
