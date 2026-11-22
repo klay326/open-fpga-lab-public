@@ -1,5 +1,7 @@
 *.log
 *.csv
 *.svg
+!results/*.svg
 calib.json
+map_thermal.json
 __pycache__/

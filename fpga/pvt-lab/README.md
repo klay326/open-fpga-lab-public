@@ -120,6 +120,74 @@ the trip.
 Full heater with the quiet window on plateaus at about 63 °C (XADC) in open
 air.
 
+## On-die supply-noise scope (`scope.v`, v5)
+
+`pvt_lab.py scope` auto-centres the droop monitor, sets the heater, captures
+16 384 consecutive per-cycle delay positions into block RAM (25 MS/s, or the
+mean of 2^d samples with `--dec d`), dumps them over UART (`Q` lines,
+about 8 s) and plots the time trace and a Hann-windowed spectrum
+(`scope_d<dec>_h<duty>.svg`). It works like an oscilloscope probe on
+VCCINT from inside the die, in units of delay-line taps.
+
+Measured 2026-11-22, v5 build (mid-chain tap 0x20):
+
+| Capture | Mean pos | rms | Strongest lines |
+|---|---|---|---|
+| 25 MS/s, heater off | 116.9 taps | **10.5 taps** | **74.8 kHz** (12 taps), 36.6 kHz, 145 kHz, 484 kHz |
+| 25 MS/s, heater FF | 88.7 taps | 4.8 taps | 574 kHz, **1.171875 MHz**, 146 kHz, 2.34 MHz, 5.86 MHz |
+| 391 kS/s (dec 6), heater FF | 86.7 taps | 2.2 taps | 153 kHz, 21.7 kHz cluster |
+
+* **1.171875 MHz = 6 × 195.3125 kHz.** That is exactly the heater PWM
+  (50 MHz / 256) times its 6 phase-staggered BUFGCE groups. The heater's own
+  load signature shows up in the supply, from inside the die, with its
+  harmonics (2.34, 5.86 MHz).
+* **Heater off is noisier (10.5 taps rms) than full load (4.8).** The
+  dominant 75 kHz tone at light load, gone under heavy load, looks like the
+  board's VCCINT buck regulator in light-load burst (PFM) mode switching to
+  fixed-frequency PWM under load (574 kHz is a candidate switching frequency).
+  The regulator part isn't checked on the schematic; this is a hypothesis.
+* The mean position shift (117 → 89 taps) is the DC IR drop under load,
+  the same effect the droop alarm uses.
+
+## Die map (`ro_grid.v`)
+
+An 8×8 grid of 4-LUT rings spread over the die (`tools/gen_ro_grid.py` →
+`ro_grid_inst.vh`; index = row·8 + col, row 0 at the bottom). Only one ring
+runs at a time, through a shared counter; one frame takes 0.34 s.
+`pvt_lab.py map` gives a live terminal heatmap (ppm vs the first frame);
+`map --ir` an IR-drop map (heater FF vs off, bracketed by off frames);
+`map --thermal 60` a temperature-rise map after 60 s of heating (heater off
+for the hot frame, 190 ppm/°C nominal). Both write SVGs.
+
+v5 first light: most cells showed **−1.3 … −1.6 % (−13 000 … −16 000 ppm)**
+under full heater load, matching the IR drop seen on the status ROs. About
+20 cells jumped between three frequency levels (~395 / 470 / 560 MHz). The
+500–600 MHz rings drove the 64:1 mux and a BUFG-clocked counter that is
+timed at only ~375–430 MHz, so edges got swallowed. v6 divides each ring by
+4 in its own slice before the mux.
+
+**v6 (local ÷4 per ring)**: all **64/64 rings work**, including the top and
+bottom rows that read 0 in v5 (the "dead" rings were the same swallowed
+edges). They run at 443–605 MHz, with 32–151 ppm frame-to-frame scatter
+(about 0.2–0.8 °C equivalent).
+
+**IR-drop map** (`map --ir`, `results/map_ir.svg`): every cell slows by
+**−1.22 … −1.66 %** under full heater load, in a smooth top-to-bottom
+gradient. Rows 7–4 (top half) sit around −13 300 ppm, rows 2–0 (bottom)
+around −15 300 to −16 600 ppm, with the worst corner at bottom right. The
+bottom of the die sees about 20 % more IR drop than the top. Plausibly that
+is where VCCINT is fed from on the package or board; that's unchecked.
+
+**Heating map** (`map --thermal 60 --xadc-ssh …`, `results/map_thermal.svg`):
+two heater-*on* frames (just after switch-on, and after 60 s), so the IR
+drop cancels. Each ring's own tempco was fitted on the heater-off
+cool-down against the XADC: **66–239 ppm/°C**, so the per-ring fit is
+essential. Rings show +4 … +15.7 °C (mostly 10–15 °C) against +15.2 °C at
+the XADC (47.4 → 62.6 °C). The magnitude is right, but there's no clear
+gradient: the placer spreads the heater banks over the whole die, so the
+die heats almost uniformly, and the ±3 °C spread is mostly fit noise. A
+heater confined to one region would show a hotspot.
+
 ## Known issues
 
 - **ro1 at `SLICE_X151Y20` (right edge, X1Y0) is unreliable.** Across builds
@@ -137,3 +205,10 @@ air.
 - The droop window reported over UART always lands in a quiet (heater-off)
   gate unless `W0` is sent (see the droop results above).
 - The hold loop has no anti-windup: about 4 °C of overshoot from a cold start.
+- **Rings in the bottom (Y≈20) and top (Y≈328) rows of the die often don't
+  oscillate.** In v5, 10 of the 16 grid cells in those rows read 0, and so
+  did the status ROs ro0 (X0Y20, fine in v4) and ro1 (X151Y20). The middle
+  rows all ran. It's build-dependent, so it points at routing resources that
+  prjxray-db models wrongly in those tile rows, not at the silicon. Not yet
+  root-caused: dumping the routed nets (`nextpnr --write`) for a dead vs a
+  live ring would show which PIPs differ.
