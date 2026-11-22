@@ -41,6 +41,8 @@ table{border-collapse:collapse;width:100%;font-size:13px}td{padding:4px 6px;bord
 @media (max-width:760px){.spark{grid-template-columns:1fr}}
 .spark svg{width:100%;height:60px;display:block}
 .kv{font-size:13.5px}.kv code{font-size:12.5px}
+.term{background:#0b0e12;color:#d6dde6;border-color:#2a313a;max-height:360px;min-height:120px}
+.term .c{color:#7d8896}.term .p{color:#7ee787}.term .e{color:#ff7b72}.term .d{color:#79c0ff}
 form{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
 code{font:12.5px ui-monospace,Menlo,monospace}
 a{color:var(--acc)}
@@ -63,6 +65,11 @@ a{color:var(--acc)}
     <div id="curpills" style="text-align:right"></div>
   </div>
   <div id="job" class="msg"></div>
+</section>
+
+<section class="card" id="conscard" style="display:none">
+  <h2>Flash console <span class="mute" id="consinfo" style="text-transform:none;letter-spacing:0;font-weight:400"></span></h2>
+  <pre class="term" id="cons"></pre>
 </section>
 
 <section class="card" id="panelcard">
@@ -211,13 +218,31 @@ function renderJtag(){
      <div class="mute" style="font-size:12.5px;margin-top:4px">${H.length?"source: "+(H[H.length-1][4]==="pvtd"?"pvtd (playground)":"manager watchdog")+"; ":""}last 30 min, kept in memory. Nothing on this page can write over JTAG.</div>`;
   el.innerHTML=h;
 }
+function renderConsole(){
+  const C=S.console,card=$("conscard");
+  const recent=C&&(S.job||Date.now()/1000-C.mtime<1800);
+  if(!recent){card.style.display="none";return}
+  card.style.display="";
+  // a progress bar redraws in place, like in a terminal
+  const out=[];
+  for(const l of C.lines){
+    const m=l.match(/^(.*?)\[[=\s>-]*\]/);
+    const prev=out.length?out[out.length-1]:null;
+    if(m&&prev&&prev.k===m[1])prev.l=l;else out.push({l,k:m?m[1]:null});
+  }
+  const cls=l=>l.startsWith("$ ")?"d":l.startsWith("# ")?"c":/done 1|Done|100(\.0+)?%/.test(l)?"p":/error|fail|refused|busy|timeout/i.test(l)?"e":"";
+  const el=$("cons"),atBottom=el.scrollHeight-el.scrollTop-el.clientHeight<40;
+  el.innerHTML=out.map(o=>`<span class="${cls(o.l)}">${esc(o.l)}</span>`).join("\n")||"…";
+  if(atBottom||S.job)el.scrollTop=el.scrollHeight;
+  $("consinfo").textContent=S.job?"(live)":"(last switch, "+ago(C.mtime)+" ago)";
+}
 async function refresh(){
   if(busy)return;busy=true;
-  try{const [c,j]=await api("/manager/api/status");if(c===200){S=j;renderAuth();renderNow();renderPanel();renderJtag();renderProjects();renderQueue();renderHist()}}
+  try{const [c,j]=await api("/manager/api/status");if(c===200){S=j;renderAuth();renderNow();renderConsole();renderPanel();renderJtag();renderProjects();renderQueue();renderHist()}}
   catch(e){$("job").innerHTML='<span class="err">can\'t reach the manager</span>'}
   finally{busy=false}
 }
-refresh();setInterval(refresh,3000);
+let tick=0;refresh();setInterval(()=>{tick++;if((S&&S.job)||tick%3===0)refresh()},1000);
 setInterval(()=>{const a=$("ago");if(a&&S)a.textContent=ago(S.since)},1000);
 </script>
 </body>

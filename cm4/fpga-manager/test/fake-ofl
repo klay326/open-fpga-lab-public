@@ -7,6 +7,8 @@ if [[ " $* " == *" --read-register "* ]]; then echo "Register raw value: 0x40107
 bit="${@: -1}"
 sleep "${MOCK_FLASH_S:-1}"
 if [ -f "$MOCK_DIR/fail-$(basename "$bit" .bit)" ]; then echo "Error: something"; exit 1; fi
-echo "Load SRAM: [====] 100.00%"; echo "Done"; echo "done 1"
+echo "Jtag frequency : requested 6000000 Hz -> real 6000000 Hz"
+for i in $(seq 0 1 100); do printf '\rLoad SRAM: [%-50s] %d.00%%' "$(printf '=%.0s' $(seq 1 $((i/2+1))))" $i; done; echo
+echo "Done"; echo "done 1"
 # what the "FPGA" now runs: write a line to the fake CM4 UART if it's pvt-lab
 basename "$bit" .bit > "$MOCK_DIR/loaded"

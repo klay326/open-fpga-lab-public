@@ -402,6 +402,16 @@ class Manager:
             if pt:
                 self.hist.append(tuple(round(v, 4) if isinstance(v, float) else v for v in pt))
 
+    def console(self):
+        """Tail of fpga-flash's live log (the last switch, kept until the next)."""
+        try:
+            st = os.stat(self.a.flash_log)
+            with open(self.a.flash_log, errors="replace") as f:
+                lines = f.read().splitlines()[-300:]
+        except OSError:
+            return None
+        return dict(lines=lines, mtime=st.st_mtime)
+
     # ---------------------------------------------------------- status
     def status(self, user):
         cat = self.catalog()
@@ -437,6 +447,7 @@ class Manager:
             panel=panel, events=list(self.events)[:10],
             jtag=max([j for j in (st.get("jtag"), self.jtag_live) if j], key=lambda j: j.get("t") or 0, default=None),
             hist=list(self.hist),
+            console=self.console(),
             limits=dict(min_gap_s=self.a.min_gap, per_hour=self.a.per_hour),
         )
 
@@ -632,6 +643,7 @@ def main():
     ap.add_argument("--flash-cmd", default="sudo -n /usr/local/sbin/fpga-flash",
                     type=lambda s: s.split())
     ap.add_argument("--flag", default="/run/fpga-manager/foreign-bitstream")
+    ap.add_argument("--flash-log", default="/run/fpga-manager/flash.log")
     ap.add_argument("--systemctl", default="/usr/bin/systemctl")
     ap.add_argument("--ofl", default="/usr/local/bin/openFPGALoader")
     ap.add_argument("--firmware", default="/usr/local/share/pvtd/xusb_xp2.hex")

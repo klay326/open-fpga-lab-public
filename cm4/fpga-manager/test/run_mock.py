@@ -99,7 +99,8 @@ daemon = subprocess.Popen(
      "--queue-dir", os.path.join(T, "queue"), "--flash-cmd", "%s %s" % (sys.executable, os.path.join(FM, "fpga-flash")),
      "--systemctl", conf["systemctl"], "--ofl", conf["ofl"], "--firmware", "/nonexistent",
      "--pvtd-port", str(PVTD_PORT), "--min-gap", "1", "--per-hour", "100", "--fallback-gap", "1",
-     "--serial-map", json.dumps(conf["serial_map"]), "--flag", os.path.join(T, "run", "foreign-bitstream")],
+     "--serial-map", json.dumps(conf["serial_map"]), "--flag", os.path.join(T, "run", "foreign-bitstream"),
+     "--flash-log", os.path.join(T, "run", "flash.log")],
     env=env, stdout=open(os.path.join(T, "daemon.log"), "w"), stderr=subprocess.STDOUT)
 
 
@@ -182,6 +183,11 @@ try:
     ok(not open(os.path.join(T, "queue", "holder")).read() if os.path.exists(os.path.join(T, "queue", "holder")) else True, "queue free after")
     time.sleep(3)
     ok(status()["xadc"] and abs(status()["xadc"]["temp_c"] - 40.5) < 0.01, "XADC watched while trng is loaded")
+    con = status()["console"]["lines"]
+    bars = [l for l in con if l.startswith("Load SRAM")]
+    ok(any(l.startswith("$ openFPGALoader") for l in con) and any("done 1" == l for l in con)
+       and any("100.00%" in l for l in bars) and 20 <= len(bars) <= 60 and any("release" in l for l in con),
+       "flash console streams openFPGALoader output (%d progress lines)" % len(bars))
     j = status()["jtag"]
     ok(j and j["idcode"] == "0x3651093" and j["model"] == "xc7k325t"
        and j["stat"]["done"] == 1 and j["stat"]["eos"] == 1 and j["stat"]["crc_error"] == 0, "JTAG status read after flash and decoded")

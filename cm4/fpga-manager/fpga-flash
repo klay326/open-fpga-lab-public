@@ -49,8 +49,20 @@ import jtaginfo                                 # noqa: E402
 ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,39}$")
 
 
+LOGF = None                                    # /run/fpga-manager/flash.log, shown on the page
+
+
+def console(line):
+    """One line of the live console (world-readable, truncated per switch)."""
+    if LOGF:
+        LOGF.write(line.rstrip()[:300] + "\n")
+        LOGF.flush()
+
+
 def log(msg):
-    print(time.strftime("%H:%M:%S ") + msg, flush=True)
+    line = time.strftime("%H:%M:%S ") + msg
+    print(line, flush=True)
+    console("# " + line)
 
 
 def load_catalog():
@@ -113,6 +125,8 @@ def write_state(st):
 
 
 def set_job(st, **kw):
+    if "step" in kw and kw["step"] != "start":
+        log(kw["step"])
     st["job"] = dict(st.get("job") or {}, **kw)
     write_state(st)
 
@@ -132,6 +146,7 @@ def pvtd_down():
     os.makedirs(CONF["run_dir"], exist_ok=True)
     open(FLAG, "w").write("set by fpga-flash %s\n" % time.strftime("%F %T"))
     systemctl("stop", CONF["pvtd_unit"])
+    log("pvtd stopped and held down")
 
 
 def pvtd_up():
@@ -140,6 +155,7 @@ def pvtd_up():
     except FileNotFoundError:
         pass
     systemctl("start", CONF["pvtd_unit"])
+    log("pvtd started")
 
 
 # ------------------------------------------------------------------ flash
@@ -150,17 +166,53 @@ def flash(path):
     last = ""
     for freq in CONF["freqs"]:
         log("openFPGALoader at %.1f MHz: %s" % (freq / 1e6, os.path.basename(path)))
-        try:
-            r = subprocess.run(base + ["--freq", str(freq), "--bitstream", path],
-                               capture_output=True, text=True, timeout=300)
-            out = r.stdout + r.stderr
-        except subprocess.TimeoutExpired:
-            out = "timeout"
+        console("$ openFPGALoader -c xilinxPlatformCableUsb --freq %d --bitstream %s" % (freq, path))
+        out = run_streamed(base + ["--freq", str(freq), "--bitstream", path], 300)
         if re.search(r"\bdone 1\b", out):
             return True, "done 1 at %.1f MHz" % (freq / 1e6)
         last = (out.strip().splitlines() or ["no output"])[-1][:200]
         log("no 'done 1': " + last)
     return False, "flash failed: " + last
+
+
+def run_streamed(cmd, timeout):
+    """Run cmd, copying its output to the console as it comes (progress bars
+    redraw with \\r: each redraw becomes a line, at most one per 2 %). Returns all output."""
+    p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    fd, out, buf, last_pct = p.stdout.fileno(), b"", b"", {}
+    deadline = time.time() + timeout
+    while True:
+        r, _, _ = select.select([fd], [], [], 1)
+        if time.time() > deadline:
+            p.kill()
+            console("timeout after %d s" % timeout)
+            return out.decode("utf-8", "replace") + "\ntimeout"
+        if not r:
+            if p.poll() is not None:
+                break
+            continue
+        chunk = os.read(fd, 4096)
+        if not chunk:
+            break
+        out += chunk
+        buf += chunk
+        parts = re.split(rb"\r\n|\n|\r", buf)
+        buf = parts.pop()
+        for raw in parts:
+            line = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", raw.decode("utf-8", "replace")).rstrip()
+            if not line:
+                continue
+            m = re.match(r"(.*?)\[[=\s>-]*\]\s*([\d.]+)%", line)
+            if m:                                   # progress bar: thin out the redraws
+                key, pct = m.group(1), float(m.group(2))
+                if pct < 100 and pct - last_pct.get(key, -99) < 2:
+                    continue
+                last_pct[key] = pct
+            console(line)
+    if buf.strip():
+        console(re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", buf.decode("utf-8", "replace")))
+    p.wait()
+    return out.decode("utf-8", "replace")
 
 
 def open_serial(dev, baud):
@@ -214,6 +266,8 @@ def load(p, st):
     if not ok:
         return False, h
     p["_sha"] = h
+    log("%s: %s, SHA-256 %s%s" % (p["id"], bit_path(p), h[:16],
+        " (root-owned, pvtd's file)" if p.get("trust") == "root-owned" else " matches the catalog"))
     pvtd_down()                               # its XADC polling would collide with the flash
     set_job(st, step="flash " + p["id"])
     ok, msg = flash(path)
@@ -222,6 +276,9 @@ def load(p, st):
     set_job(st, step="read status " + p["id"])
     p["_jtag"] = jtaginfo.read(CONF["ofl"], CONF["firmware"])   # read-only: IDCODE, STAT
     p["_jtag"]["by"] = "after flash"
+    j = p["_jtag"]
+    log("JTAG: %s %s, STAT %s%s" % (j.get("model", "?"), j.get("idcode", "?"), j.get("stat_raw", "?"),
+                                    " (DONE=%d EOS=%d)" % (j["stat"]["done"], j["stat"]["eos"]) if j.get("stat") else ""))
     if p.get("owner") == "pvtd":
         pvtd_up()                             # pvtd does its own checks, keepalives, reloads
         return True, msg + "; pvtd started"
@@ -245,17 +302,24 @@ def switch(pid, who):
     except BlockingIOError:
         print("busy: a switch is already running", file=sys.stderr)
         return 10
+    global LOGF
+    LOGF = open(os.path.join(CONF["run_dir"], "flash.log"), "w")
+    os.chmod(LOGF.name, 0o644)
+    console("# %s switch to %s requested by %s" % (time.strftime("%F %T"), pid, who))
     target, fb = byid[pid], byid[cat["fallback"]]
     # refuse early on a bad hash, before taking the board
     ok, why = verify(target)
     if not ok:
+        log("refused: " + why)
         print("refused: " + why, file=sys.stderr)
         return 2
     qn = CONF["queue_name"]
     queue("join", qn, "web switch to %s (by %s)" % (pid, who))
+    log("fpga-queue join + take " + qn)
     rc, out = queue("take", qn)
     if rc != 0:
         queue("leave", qn)
+        log("board busy: " + out)
         print("busy: " + out, file=sys.stderr)
         return 10
     st = read_state()
@@ -293,6 +357,7 @@ def switch(pid, who):
             st.pop("job")
             write_state(st)
         queue("release", qn, note)
+        log("fpga-queue release: " + note)
     return rc
 
 

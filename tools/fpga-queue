@@ -71,7 +71,13 @@ case "$cmd" in
     if [ "$first" != "$name" ]; then echo "not your turn: next is ${first:-nobody (join first)}"; exit 1; fi
     head -1 "$D/queue" | awk -F'\t' -v t="$(now)" 'BEGIN{OFS="\t"}{$2=t; print}' > "$D/holder.new"; mv "$D/holder.new" "$D/holder"
     tail -n +2 "$D/queue" > "$D/queue.new"; mv "$D/queue.new" "$D/queue"
-    printf '%s\tTAKE\t%s\n' "$(now)" "$name" >> "$D/log"; echo "$name holds the board" ;;
+    printf '%s\tTAKE\t%s\n' "$(now)" "$name" >> "$D/log"; echo "$name holds the board"
+    if [ -e /run/fpga-manager/foreign-bitstream ] && [ "$name" != web-flasher ]; then
+        proj=$(sed -n 's/.*"project": *"\([^"]*\)".*/\1/p' /var/lib/fpga-manager/state.json 2>/dev/null | head -1)
+        echo "WARNING: the web flasher left '${proj:-another project}' loaded, NOT the playground; pvtd is held down." >&2
+        echo "  To restore: sudo /usr/local/bin/openFPGALoader -c xilinxPlatformCableUsb --probe-firmware /usr/local/share/pvtd/xusb_xp2.hex --freq 6000000 --bitstream /usr/local/share/pvtd/playground.bit" >&2
+        echo "              sudo rm /run/fpga-manager/foreign-bitstream && sudo systemctl start pvtd" >&2
+    fi ;;
   release)
     need_name
     if [ "$(cut -f1 "$D/holder" 2>/dev/null)" != "$name" ]; then echo "$name doesn't hold the board"; exit 1; fi
