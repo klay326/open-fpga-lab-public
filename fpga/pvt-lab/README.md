@@ -119,3 +119,21 @@ the trip.
 
 Full heater with the quiet window on plateaus at about 63 °C (XADC) in open
 air.
+
+## Known issues
+
+- **ro1 at `SLICE_X151Y20` (right edge, X1Y0) is unreliable.** Across builds
+  it read 492 MHz (xadc-monitor), ~300 MHz (pvt-lab v4, which explains its
+  odd `a` in `calib_v4_bitstream.json`) and 0 (an early playground build),
+  while nextpnr's timing for it stayed at ~448 MHz each time. The likely
+  cause is a routing resource in that edge tile that prjxray-db models
+  wrongly. In the CM4 playground's copy (`cm4/pvt-web/playground`, 59aaf00)
+  it was moved to `SLICE_X145Y20` and reads ~490 MHz like the other rings.
+  This folder still has X151; change `ro1`'s `LOC` and re-run `sweep` if you
+  rebuild.
+- **The droop-monitor tap is routing-dependent.** The mid-chain LUT tap was
+  0x2C in pvt-lab v4 and 0x2C then 0x30 in playground builds. Always run
+  `pvt_lab.py droop` (auto-centring) after a rebuild rather than hard-coding it.
+- The droop window reported over UART always lands in a quiet (heater-off)
+  gate unless `W0` is sent (see the droop results above).
+- The hold loop has no anti-windup: about 4 °C of overshoot from a cold start.
