@@ -1,0 +1,372 @@
+state=IDLE
+state=BITSLIP_DQS_TRAIN_1
+
+state=COLLECT_DQS, lane=0, dqs_store= 00000011_11111100_00000000_00000000
+state=ANALYZE_DQS, dqs_start_index=0x00
+state=ANALYZE_DQS, dqs_start_index=0x01
+state=ANALYZE_DQS, dqs_start_index=0x02
+state=ANALYZE_DQS, dqs_start_index=0x03
+state=ANALYZE_DQS, dqs_start_index=0x04
+state=ANALYZE_DQS, dqs_start_index=0x05
+state=ANALYZE_DQS, dqs_start_index=0x06
+state=ANALYZE_DQS, dqs_start_index=0x07
+state=ANALYZE_DQS, dqs_start_index=0x08
+state=ANALYZE_DQS, dqs_start_index=0x09
+state=ANALYZE_DQS, dqs_start_index=0x0A
+state=ANALYZE_DQS, dqs_start_index=0x0B
+state=ANALYZE_DQS, dqs_start_index=0x0C
+state=ANALYZE_DQS, dqs_start_index=0x0D
+state=ANALYZE_DQS, dqs_start_index=0x0E
+state=ANALYZE_DQS, dqs_start_index=0x0F
+state=ANALYZE_DQS, dqs_start_index=0x10
+state=ANALYZE_DQS, dqs_start_index=0x11
+state=ANALYZE_DQS, dqs_start_index=0x12
+state=ANALYZE_DQS, dqs_start_index=0x13
+state=ANALYZE_DQS, dqs_start_index=0x14
+state=ANALYZE_DQS, dqs_start_index=0x15
+state=ANALYZE_DQS, dqs_start_index=0x16
+state=ANALYZE_DQS, dqs_start_index=0x17
+state=ANALYZE_DQS, dqs_start_index=0x18
+state=ANALYZE_DQS, dqs_start_index=0x19
+state=ANALYZE_DQS, dqs_start_index=0x1A
+state=ANALYZE_DQS, dqs_start_index=0x1B
+state=ANALYZE_DQS, dqs_start_index=0x1C
+state=ANALYZE_DQS, dqs_start_index=0x1D
+state=ANALYZE_DQS, dqs_start_index=0x1E
+state=ANALYZE_DQS, dqs_start_index=0x1F
+state=ANALYZE_DQS, dqs_start_index=0x20
+state=ANALYZE_DQS, dqs_start_index=0x21
+state=ANALYZE_DQS, dqs_start_index=0x22
+state=ANALYZE_DQS, dqs_start_index=0x23
+state=ANALYZE_DQS, dqs_start_index=0x24
+state=ANALYZE_DQS, dqs_start_index=0x25
+state=ANALYZE_DQS, dqs_start_index=0x26
+state=ANALYZE_DQS, Glitch: Reached End
+----------------------
+
+
+state=COLLECT_DQS, lane=0, dqs_store= 00000011_11111100_00000000_00000000
+state=ANALYZE_DQS, dqs_start_index=0x00
+state=ANALYZE_DQS, dqs_start_index=0x01
+state=ANALYZE_DQS, dqs_start_index=0x02
+state=ANALYZE_DQS, dqs_start_index=0x03
+state=ANALYZE_DQS, dqs_start_index=0x04
+state=ANALYZE_DQS, dqs_start_index=0x05
+state=ANALYZE_DQS, dqs_start_index=0x06
+state=ANALYZE_DQS, dqs_start_index=0x07
+state=ANALYZE_DQS, dqs_start_index=0x08
+state=ANALYZE_DQS, dqs_start_index=0x09
+state=ANALYZE_DQS, dqs_start_index=0x0A
+state=ANALYZE_DQS, dqs_start_index=0x0B
+state=ANALYZE_DQS, dqs_start_index=0x0C
+state=ANALYZE_DQS, dqs_start_index=0x0D
+state=ANALYZE_DQS, dqs_start_index=0x0E
+state=ANALYZE_DQS, dqs_start_index=0x0F
+state=ANALYZE_DQS, dqs_start_index=0x10
+state=ANALYZE_DQS, dqs_start_index=0x11
+state=ANALYZE_DQS, dqs_start_index=0x12
+state=ANALYZE_DQS, dqs_start_index=0x13
+state=ANALYZE_DQS, dqs_start_index=0x14
+state=ANALYZE_DQS, dqs_start_index=0x15
+state=ANALYZE_DQS, dqs_start_index=0x16
+state=ANALYZE_DQS, dqs_start_index=0x17
+state=ANALYZE_DQS, dqs_start_index=0x18
+state=ANALYZE_DQS, dqs_start_index=0x19
+state=ANALYZE_DQS, dqs_start_index=0x1A
+state=ANALYZE_DQS, dqs_start_index=0x1B
+state=ANALYZE_DQS, dqs_start_index=0x1C
+state=ANALYZE_DQS, dqs_start_index=0x1D
+state=ANALYZE_DQS, dqs_start_index=0x1E
+state=ANALYZE_DQS, dqs_start_index=0x1F
+state=ANALYZE_DQS, dqs_start_index=0x20
+state=ANALYZE_DQS, dqs_start_index=0x21
+state=ANALYZE_DQS, dqs_start_index=0x22
+state=ANALYZE_DQS, dqs_start_index=0x23
+state=ANALYZE_DQS, dqs_start_index=0x24
+state=ANALYZE_DQS, dqs_start_index=0x25
+state=ANALYZE_DQS, dqs_start_index=0x26
+state=ANALYZE_DQS, Glitch: Reached End
+----------------------
+
+
+state=COLLECT_DQS, lane=0, dqs_store= 00000011_11111100_00000000_00000000
+state=ANALYZE_DQS, dqs_start_index=0x00
+state=ANALYZE_DQS, dqs_start_index=0x01
+state=ANALYZE_DQS, dqs_start_index=0x02
+state=ANALYZE_DQS, dqs_start_index=0x03
+state=ANALYZE_DQS, dqs_start_index=0x04
+state=ANALYZE_DQS, dqs_start_index=0x05
+state=ANALYZE_DQS, dqs_start_index=0x06
+state=ANALYZE_DQS, dqs_start_index=0x07
+state=ANALYZE_DQS, dqs_start_index=0x08
+state=ANALYZE_DQS, dqs_start_index=0x09
+state=ANALYZE_DQS, dqs_start_index=0x0A
+state=ANALYZE_DQS, dqs_start_index=0x0B
+state=ANALYZE_DQS, dqs_start_index=0x0C
+state=ANALYZE_DQS, dqs_start_index=0x0D
+state=ANALYZE_DQS, dqs_start_index=0x0E
+state=ANALYZE_DQS, dqs_start_index=0x0F
+state=ANALYZE_DQS, dqs_start_index=0x10
+state=ANALYZE_DQS, dqs_start_index=0x11
+state=ANALYZE_DQS, dqs_start_index=0x12
+state=ANALYZE_DQS, dqs_start_index=0x13
+state=ANALYZE_DQS, dqs_start_index=0x14
+state=ANALYZE_DQS, dqs_start_index=0x15
+state=ANALYZE_DQS, dqs_start_index=0x16
+state=ANALYZE_DQS, dqs_start_index=0x17
+state=ANALYZE_DQS, dqs_start_index=0x18
+state=ANALYZE_DQS, dqs_start_index=0x19
+state=ANALYZE_DQS, dqs_start_index=0x1A
+state=ANALYZE_DQS, dqs_start_index=0x1B
+state=ANALYZE_DQS, dqs_start_index=0x1C
+state=ANALYZE_DQS, dqs_start_index=0x1D
+state=ANALYZE_DQS, dqs_start_index=0x1E
+state=ANALYZE_DQS, dqs_start_index=0x1F
+state=ANALYZE_DQS, dqs_start_index=0x20
+state=ANALYZE_DQS, dqs_start_index=0x21
+state=ANALYZE_DQS, dqs_start_index=0x22
+state=ANALYZE_DQS, dqs_start_index=0x23
+state=ANALYZE_DQS, dqs_start_index=0x24
+state=ANALYZE_DQS, dqs_start_index=0x25
+state=ANALYZE_DQS, dqs_start_index=0x26
+state=ANALYZE_DQS, Glitch: Reached End
+----------------------
+
+
+state=COLLECT_DQS, lane=0, dqs_store= 00000011_11111100_00000000_00000000
+state=ANALYZE_DQS, dqs_start_index=0x00
+state=ANALYZE_DQS, dqs_start_index=0x01
+state=ANALYZE_DQS, dqs_start_index=0x02
+state=ANALYZE_DQS, dqs_start_index=0x03
+state=ANALYZE_DQS, dqs_start_index=0x04
+state=ANALYZE_DQS, dqs_start_index=0x05
+state=ANALYZE_DQS, dqs_start_index=0x06
+state=ANALYZE_DQS, dqs_start_index=0x07
+state=ANALYZE_DQS, dqs_start_index=0x08
+state=ANALYZE_DQS, dqs_start_index=0x09
+state=ANALYZE_DQS, dqs_start_index=0x0A
+state=ANALYZE_DQS, dqs_start_index=0x0B
+state=ANALYZE_DQS, dqs_start_index=0x0C
+state=ANALYZE_DQS, dqs_start_index=0x0D
+state=ANALYZE_DQS, dqs_start_index=0x0E
+state=ANALYZE_DQS, dqs_start_index=0x0F
+state=ANALYZE_DQS, dqs_start_index=0x10
+state=ANALYZE_DQS, dqs_start_index=0x11
+state=ANALYZE_DQS, dqs_start_index=0x12
+state=ANALYZE_DQS, dqs_start_index=0x13
+state=ANALYZE_DQS, dqs_start_index=0x14
+state=ANALYZE_DQS, dqs_start_index=0x15
+state=ANALYZE_DQS, dqs_start_index=0x16
+state=ANALYZE_DQS, dqs_start_index=0x17
+state=ANALYZE_DQS, dqs_start_index=0x18
+state=ANALYZE_DQS, dqs_start_index=0x19
+state=ANALYZE_DQS, dqs_start_index=0x1A
+state=ANALYZE_DQS, dqs_start_index=0x1B
+state=ANALYZE_DQS, dqs_start_index=0x1C
+state=ANALYZE_DQS, dqs_start_index=0x1D
+state=ANALYZE_DQS, dqs_start_index=0x1E
+state=ANALYZE_DQS, dqs_start_index=0x1F
+state=ANALYZE_DQS, dqs_start_index=0x20
+state=ANALYZE_DQS, dqs_start_index=0x21
+state=ANALYZE_DQS, dqs_start_index=0x22
+state=ANALYZE_DQS, dqs_start_index=0x23
+state=ANALYZE_DQS, dqs_start_index=0x24
+state=ANALYZE_DQS, dqs_start_index=0x25
+state=ANALYZE_DQS, dqs_start_index=0x26
+state=ANALYZE_DQS, Glitch: Reached End
+----------------------
+
+
+state=COLLECT_DQS, lane=0, dqs_store= 00000011_11111100_00000000_00000000
+state=ANALYZE_DQS, dqs_start_index=0x00
+state=ANALYZE_DQS, dqs_start_index=0x01
+state=ANALYZE_DQS, dqs_start_index=0x02
+state=ANALYZE_DQS, dqs_start_index=0x03
+state=ANALYZE_DQS, dqs_start_index=0x04
+state=ANALYZE_DQS, dqs_start_index=0x05
+state=ANALYZE_DQS, dqs_start_index=0x06
+state=ANALYZE_DQS, dqs_start_index=0x07
+state=ANALYZE_DQS, dqs_start_index=0x08
+state=ANALYZE_DQS, dqs_start_index=0x09
+state=ANALYZE_DQS, dqs_start_index=0x0A
+state=ANALYZE_DQS, dqs_start_index=0x0B
+state=ANALYZE_DQS, dqs_start_index=0x0C
+state=ANALYZE_DQS, dqs_start_index=0x0D
+state=ANALYZE_DQS, dqs_start_index=0x0E
+state=ANALYZE_DQS, dqs_start_index=0x0F
+state=ANALYZE_DQS, dqs_start_index=0x10
+state=ANALYZE_DQS, dqs_start_index=0x11
+state=ANALYZE_DQS, dqs_start_index=0x12
+state=ANALYZE_DQS, dqs_start_index=0x13
+state=ANALYZE_DQS, dqs_start_index=0x14
+state=ANALYZE_DQS, dqs_start_index=0x15
+state=ANALYZE_DQS, dqs_start_index=0x16
+state=ANALYZE_DQS, dqs_start_index=0x17
+state=ANALYZE_DQS, dqs_start_index=0x18
+state=ANALYZE_DQS, dqs_start_index=0x19
+state=ANALYZE_DQS, dqs_start_index=0x1A
+state=ANALYZE_DQS, dqs_start_index=0x1B
+state=ANALYZE_DQS, dqs_start_index=0x1C
+state=ANALYZE_DQS, dqs_start_index=0x1D
+state=ANALYZE_DQS, dqs_start_index=0x1E
+state=ANALYZE_DQS, dqs_start_index=0x1F
+state=ANALYZE_DQS, dqs_start_index=0x20
+state=ANALYZE_DQS, dqs_start_index=0x21
+state=ANALYZE_DQS, dqs_start_index=0x22
+state=ANALYZE_DQS, dqs_start_index=0x23
+state=ANALYZE_DQS, dqs_start_index=0x24
+state=ANALYZE_DQS, dqs_start_index=0x25
+state=ANALYZE_DQS, dqs_start_index=0x26
+state=ANALYZE_DQS, Glitch: Reached End
+----------------------
+
+
+state=COLLECT_DQS, lane=0, dqs_store= 00000011_11111100_00000000_00000000
+state=ANALYZE_DQS, dqs_start_index=0x00
+state=ANALYZE_DQS, dqs_start_index=0x01
+state=ANALYZE_DQS, dqs_start_index=0x02
+state=ANALYZE_DQS, dqs_start_index=0x03
+state=ANALYZE_DQS, dqs_start_index=0x04
+state=ANALYZE_DQS, dqs_start_index=0x05
+state=ANALYZE_DQS, dqs_start_index=0x06
+state=ANALYZE_DQS, dqs_start_index=0x07
+state=ANALYZE_DQS, dqs_start_index=0x08
+state=ANALYZE_DQS, dqs_start_index=0x09
+state=ANALYZE_DQS, dqs_start_index=0x0A
+state=ANALYZE_DQS, dqs_start_index=0x0B
+state=ANALYZE_DQS, dqs_start_index=0x0C
+state=ANALYZE_DQS, dqs_start_index=0x0D
+state=ANALYZE_DQS, dqs_start_index=0x0E
+state=ANALYZE_DQS, dqs_start_index=0x0F
+state=ANALYZE_DQS, dqs_start_index=0x10
+state=ANALYZE_DQS, dqs_start_index=0x11
+state=ANALYZE_DQS, dqs_start_index=0x12
+state=ANALYZE_DQS, dqs_start_index=0x13
+state=ANALYZE_DQS, dqs_start_index=0x14
+state=ANALYZE_DQS, dqs_start_index=0x15
+state=ANALYZE_DQS, dqs_start_index=0x16
+state=ANALYZE_DQS, dqs_start_index=0x17
+state=ANALYZE_DQS, dqs_start_index=0x18
+state=ANALYZE_DQS, dqs_start_index=0x19
+state=ANALYZE_DQS, dqs_start_index=0x1A
+state=ANALYZE_DQS, dqs_start_index=0x1B
+state=ANALYZE_DQS, dqs_start_index=0x1C
+state=ANALYZE_DQS, dqs_start_index=0x1D
+state=ANALYZE_DQS, dqs_start_index=0x1E
+state=ANALYZE_DQS, dqs_start_index=0x1F
+state=ANALYZE_DQS, dqs_start_index=0x20
+state=ANALYZE_DQS, dqs_start_index=0x21
+state=ANALYZE_DQS, dqs_start_index=0x22
+state=ANALYZE_DQS, dqs_start_index=0x23
+state=ANALYZE_DQS, dqs_start_index=0x24
+state=ANALYZE_DQS, dqs_start_index=0x25
+state=ANALYZE_DQS, dqs_start_index=0x26
+state=ANALYZE_DQS, Glitch: Reached End
+----------------------
+
+
+state=COLLECT_DQS, lane=0, dqs_store= 00000011_11111100_00000000_00000000
+state=ANALYZE_DQS, dqs_start_index=0x00
+state=ANALYZE_DQS, dqs_start_index=0x01
+state=ANALYZE_DQS, dqs_start_index=0x02
+state=ANALYZE_DQS, dqs_start_index=0x03
+state=ANALYZE_DQS, dqs_start_index=0x04
+state=ANALYZE_DQS, dqs_start_index=0x05
+state=ANALYZE_DQS, dqs_start_index=0x06
+state=ANALYZE_DQS, dqs_start_index=0x07
+state=ANALYZE_DQS, dqs_start_index=0x08
+state=ANALYZE_DQS, dqs_start_index=0x09
+state=ANALYZE_DQS, dqs_start_index=0x0A
+state=ANALYZE_DQS, dqs_start_index=0x0B
+state=ANALYZE_DQS, dqs_start_index=0x0C
+state=ANALYZE_DQS, dqs_start_index=0x0D
+state=ANALYZE_DQS, dqs_start_index=0x0E
+state=ANALYZE_DQS, dqs_start_index=0x0F
+state=ANALYZE_DQS, dqs_start_index=0x10
+state=ANALYZE_DQS, dqs_start_index=0x11
+state=ANALYZE_DQS, dqs_start_index=0x12
+state=ANALYZE_DQS, dqs_start_index=0x13
+state=ANALYZE_DQS, dqs_start_index=0x14
+state=ANALYZE_DQS, dqs_start_index=0x15
+state=ANALYZE_DQS, dqs_start_index=0x16
+state=ANALYZE_DQS, dqs_start_index=0x17
+state=ANALYZE_DQS, dqs_start_index=0x18
+state=ANALYZE_DQS, dqs_start_index=0x19
+state=ANALYZE_DQS, dqs_start_index=0x1A
+state=ANALYZE_DQS, dqs_start_index=0x1B
+state=ANALYZE_DQS, dqs_start_index=0x1C
+state=ANALYZE_DQS, dqs_start_index=0x1D
+state=ANALYZE_DQS, dqs_start_index=0x1E
+state=ANALYZE_DQS, dqs_start_index=0x1F
+state=ANALYZE_DQS, dqs_start_index=0x20
+state=ANALYZE_DQS, dqs_start_index=0x21
+state=ANALYZE_DQS, dqs_start_index=0x22
+state=ANALYZE_DQS, dqs_start_index=0x23
+state=ANALYZE_DQS, dqs_start_index=0x24
+state=ANALYZE_DQS, dqs_start_index=0x25
+state=ANALYZE_DQS, dqs_start_index=0x26
+state=ANALYZE_DQS, Glitch: Reached End
+----------------------
+
+
+state=COLLECT_DQS, lane=0, dqs_store= 00000011_11111100_00000000_00000000
+state=ANALYZE_DQS, dqs_start_index=0x00
+state=ANALYZE_DQS, dqs_start_index=0x01
+state=ANALYZE_DQS, dqs_start_index=0x02
+state=ANALYZE_DQS, dqs_start_index=0x03
+state=ANALYZE_DQS, dqs_start_index=0x04
+state=ANALYZE_DQS, dqs_start_index=0x05
+state=ANALYZE_DQS, dqs_start_index=0x06
+state=ANALYZE_DQS, dqs_start_index=0x07
+state=ANALYZE_DQS, dqs_start_index=0x08
+state=ANALYZE_DQS, dqs_start_index=0x09
+state=ANALYZE_DQS, dqs_start_index=0x0A
+state=ANALYZE_DQS, dqs_start_index=0x0B
+state=ANALYZE_DQS, dqs_start_index=0x0C
+state=ANALYZE_DQS, dqs_start_index=0x0D
+state=ANALYZE_DQS, dqs_start_index=0x0E
+state=ANALYZE_DQS, dqs_start_index=0x0F
+state=ANALYZE_DQS, dqs_start_index=0x10
+state=ANALYZE_DQS, dqs_start_index=0x11
+state=ANALYZE_DQS, dqs_start_index=0x12
+state=ANALYZE_DQS, dqs_start_index=0x13
+state=ANALYZE_DQS, dqs_start_index=0x14
+state=ANALYZE_DQS, dqs_start_index=0x15
+state=ANALYZE_DQS, dqs_start_index=0x16
+state=ANALYZE_DQS, dqs_start_index=0x17
+state=ANALYZE_DQS, dqs_start_index=0x18
+state=ANALYZE_DQS, dqs_start_index=0x19
+state=ANALYZE_DQS, dqs_start_index=0x1A
+state=ANALYZE_DQS, dqs_start_index=0x1B
+state=ANALYZE_DQS, dqs_start_index=0x1C
+state=ANALYZE_DQS, dqs_start_index=0x1D
+state=ANALYZE_DQS, dqs_start_index=0x1E
+state=ANALYZE_DQS, dqs_start_index=0x1F
+state=ANALYZE_DQS, dqs_start_index=0x20
+state=ANALYZE_DQS, dqs_start_index=0x21
+state=ANALYZE_DQS, dqs_start_index=0x22
+state=ANALYZE_DQS, dqs_start_index=0x23
+state=ANALYZE_DQS, dqs_start_index=0x24
+state=ANALYZE_DQS, dqs_start_index=0x25
+state=ANALYZE_DQS, dqs_start_index=0x26
+state=ANALYZE_DQS, Glitch: Reached End
+----------------------
+
+
+state=COLLECT_DQS, lane=0, dqs_store= 00000011_11111100_00000000_00000000
+state=ANALYZE_DQS, dqs_start_index=0x00
+state=ANALYZE_DQS, dqs_start_index=0x01
+state=ANALYZE_DQS, dqs_start_index=0x02
+state=ANALYZE_DQS, dqs_start_index=0x03
+state=ANALYZE_DQS, dqs_start_index=0x04
+state=ANALYZE_DQS, dqs_start_index=0x05
+state=ANALYZE_DQS, dqs_start_index=0x06
+state=ANALYZE_DQS, dqs_start_index=0x07
+state=ANALYZE_DQS, dqs_start_index=0x08
+state=ANALYZE_DQS, dqs_start_index=0x09
+state=ANALYZE_DQS, dqs_start_index=0x0A
+state=ANALYZE_DQS, dqs_start_index=0x0B
+state=ANALYZE_DQS, dqs_start_index=0x0C
+state=ANALYZE_DQS, dqs_start_index=0x0D
+state=ANALYZE_DQS, dqs_start_index=0x0E
+state=ANALYZE_DQS, dqs_start_index=0

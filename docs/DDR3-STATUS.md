@@ -217,6 +217,32 @@ in simulation (board flight time vs IDELAY sweep range; try SPEED_BIN 3
 and a different read-delay start; log `dqs_start_index` / idelay taps over
 the UART).
 
+### Board run with MIG drive/ODT + CAL_DEBUG log (2026-11-22, 16:00)
+
+- **MIG drive/ODT alone doesn't fix it.** Same as before: it reaches state 14
+  in the first ~8 restart cycles (under a second), then loops in read DQS
+  calibration (states 2-4).
+- **The CAL_DEBUG log** (`ddr3-logs/2026-11-22-caldebug-read-level.log`)
+  shows every MPR-read capture is **bit-identical**:
+  `dqs_store = 00000011_11111100_00000000_00000000`. That's one solid high
+  run of 8 samples, the length of the BL8 burst, where DQS should toggle
+  (preamble then `0101...`). The controller never finds `01_01_01_01_00`
+  ("Glitch: Reached End" every time).
+- The capture **doesn't change** although the controller loads a new IDELAY
+  tap after each attempt; 32 taps (~2.5 ns) span more than half a DQS period.
+  So the sampling point isn't moving.
+- Ruled out: the ISERDES input mux. nextpnr emits `IFFDELMUXE3.P0`, which per
+  prjxray fuzzer 035 is the IDELAY path, correct for `IOBDELAY="IFD"`.
+- **Next suspects**, in order:
+  1. IDELAY tap loads not taking effect (VAR_LOAD `LD`/`CNTVALUEIN` routing
+     or bits). Check: bring `CNTVALUEOUT` of the DQS IDELAY out on the UART.
+  2. Both ISERDES samples taken on the same edge (CLKB from the 180-degree
+     BUFG not acting as the opposite edge), which would turn a toggling DQS
+     into a constant at a fixed phase. Same family of bug as the dead D2
+     half of the ODDR.
+  3. FPGA-side read termination missing (no DCI in prjxray), from the
+     offline round below.
+
 ### Offline round: why the board fails where the sim passes (2026-11-22)
 
 - **Trace delay isn't it.** `sim/run.sh` has `BUS=<ps>` (Micron model delay
