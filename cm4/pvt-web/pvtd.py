@@ -297,7 +297,7 @@ class Jtag(threading.Thread):
 # ------------------------------------------------------------------ storage
 class Store:
     COLS = (["temp_c", "vccint_v", "vccaux_v"] + ["ro%d_mhz" % k for k in range(NRO)] +
-            ["ro_temp_c", "duty", "tdc_ps", "droop_avg", "trng_p1"])
+            ["ro_temp_c", "duty", "tdc_ps", "droop_avg", "trng_p1", "quiet"])
 
     def __init__(self, path, keep_days):
         os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -333,7 +333,7 @@ class Store:
     def calib_rows(self, since):
         with self.lock:
             return self.db.execute("SELECT temp_c, vccint_v, %s FROM s WHERE t >= ? AND temp_c IS NOT NULL "
-                                   "AND vccint_v IS NOT NULL" %
+                                   "AND vccint_v IS NOT NULL AND (quiet = 1 OR duty = 0)" %
                                    ",".join("ro%d_mhz" % k for k in range(NRO)), (int(since),)).fetchall()
 
 
@@ -392,6 +392,7 @@ class Pvtd:
         # control state
         self.ctl = dict(mode="off", duty=0, hold_c=None, lease_until=0.0, quiet=True, droop_tap=args.droop_tap)
         self.cooldown = False
+        self.pi = None
         self.log = collections.deque(maxlen=40)
         self.hits = collections.defaultdict(collections.deque)
         self.glob = collections.deque()
@@ -454,7 +455,11 @@ class Pvtd:
             self.lab.send("H00")
         elif mode == "heater":
             self.lab.send("H%02X" % duty)
+        elif mode == "hold" and self.jtag and self.jtag.latest():
+            self.pi = dict(i=None, t=0.0)          # host loop on the XADC, see hold_step()
+            self.lab.send("H00")
         elif mode == "hold":
+            self.pi = None
             k = self.best_ro()
             c = self.cal["ro"][k]
             xv = self.jtag.latest() if self.jtag else None
@@ -464,6 +469,28 @@ class Pvtd:
             self.lab.send("G6")
             self.lab.send("MFF")
             self.lab.send("S%d%06X" % (k, cnt))
+
+    def hold_step(self):
+        """PI loop on the XADC (one step per new reading). duty in 0..255.
+        Plant: about +25 C at full duty, a fast (~15 s) and a slow (~2 min) pole."""
+        xv, t = (self.jtag.val, self.jtag.t) if self.jtag else (None, 0)
+        if not xv or not self.pi or t == self.pi["t"]:
+            return
+        dt = min(t - self.pi["t"], 10.0) if self.pi["t"] else 3.0
+        self.pi["t"] = t
+        err = self.ctl["hold_c"] - xv["temp_c"]
+        kp, ki = 30.0, 0.35
+        if self.pi["i"] is None:                    # bumpless start: feed-forward from the plant gain
+            self.pi["i"] = max(0.0, min(255.0, (self.ctl["hold_c"] - 38.0) * 10.2))
+        p = kp * err
+        new_i = self.pi["i"] + ki * err * dt
+        u = p + new_i
+        if 0.0 < u < 255.0 or (u >= 255.0 and err < 0) or (u <= 0.0 and err > 0):
+            self.pi["i"] = max(0.0, min(255.0, new_i))   # anti-windup: integrate only when not pushing a limit
+        duty = int(max(0, min(255, round(p + self.pi["i"]))))
+        with self.lock:
+            self.ctl["duty"] = duty
+        self.lab.send("H%02X" % duty)
 
     def arm_hw_alarm(self):
         """On-chip over-temperature alarm at tmax+3 C on the best RO (hardware backstop)."""
@@ -524,8 +551,8 @@ class Pvtd:
             tc = req.get("temp_c")
             if not isinstance(tc, (int, float)) or not 30 <= tc <= self.args.max_hold:
                 return 400, "hold temperature must be 30-%d C" % self.args.max_hold
-            if not self.cal:
-                return 409, "no ring-oscillator calibration yet"
+            if not self.cal and not (self.jtag and self.jtag.latest()):
+                return 409, "no XADC and no ring-oscillator calibration yet"
             with self.lock:
                 self.ctl.update(mode="hold", duty=0, hold_c=float(tc), lease_until=time.time() + self.args.lease)
             self.apply("hold", hold_c=float(tc))
@@ -619,6 +646,12 @@ class Pvtd:
                     self.note("pvtd", "heater off: " + why)
                 elif mode == "heater":
                     self.apply("heater", self.ctl["duty"])       # re-assert after a watchdog/reset
+                elif mode == "hold" and self.pi is not None:
+                    if self.jtag and self.jtag.latest():
+                        self.hold_step()
+                    else:                                         # XADC lost: hand over to the FPGA loop
+                        if self.cal:
+                            self.apply("hold", hold_c=self.ctl["hold_c"])
             if self.cooldown and t is not None and t < self.args.tmax - 10:
                 self.cooldown = False
             # self-calibration against the XADC, every 10 min
@@ -668,8 +701,9 @@ class Pvtd:
             for k, f in enumerate(n["ro_mhz"] or []):
                 row["ro%d_mhz" % k] = f
             lab = n["lab"] or {}
+            # quiet: the RO counts are heater-off samples (clean for the RO calibration)
             row.update(duty=lab.get("duty"), tdc_ps=lab.get("tdc_ps"), droop_avg=lab.get("droop_avg"),
-                       trng_p1=(n.get("trng") or {}).get("p1"))
+                       trng_p1=(n.get("trng") or {}).get("p1"), quiet=1 if n["control"]["quiet"] else 0)
             self.store.add(n["time"], row)
 
     def run(self):
@@ -786,7 +820,7 @@ def main():
     ap.add_argument("--period", type=float, default=10, help="s between stored samples")
     ap.add_argument("--keep-days", type=float, default=30)
     ap.add_argument("--no-xadc", dest="xadc", action="store_false")
-    ap.add_argument("--xadc-period", type=float, default=5)
+    ap.add_argument("--xadc-period", type=float, default=3)
     ap.add_argument("--ofl", default="/usr/local/bin/openFPGALoader")
     ap.add_argument("--firmware", default="/usr/local/share/pvtd/xusb_xp2.hex")
     ap.add_argument("--jtag-freq", type=int, default=1500000)

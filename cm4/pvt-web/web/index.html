@@ -64,7 +64,7 @@ footer{margin-top:26px;font-size:12px;color:var(--mut)}
  <div class="card"><div class="lbl">Heater</div><div class="val" id="duty">--</div><div class="note" id="hmode">&nbsp;</div></div>
 </div>
 
-<div class="section"><div class="head"><div><h2>Thermal lab</h2><span class="note">About 200,000 flip-flops toggling every clock make the heater. The hold loop runs in the FPGA itself, using a ring oscillator as its thermometer.</span></div></div>
+<div class="section"><div class="head"><div><h2>Thermal lab</h2><span class="note">About 200,000 flip-flops toggling every clock make the heater. Hold runs on the Pi against the XADC, or inside the FPGA on a ring oscillator when the XADC is offline.</span></div></div>
  <div class="grid g32">
   <div class="card">
    <div class="row" style="margin-top:0"><span class="lbl">Temperature &amp; heater</span><div class="seg" id="seg"><button data-h="0.25">15 m</button><button data-h="1" class="on">1 h</button><button data-h="24">24 h</button><button data-h="168">7 d</button></div></div>
@@ -168,12 +168,12 @@ async function now(){
  $('vint').innerHTML=n.vccint_v==null?'--':f(n.vccint_v,3)+'<small>V</small>';
  $('vaux').innerHTML=n.vccaux_v==null?'--':f(n.vccaux_v,3)+'<small>V</small>';
  $('duty').innerHTML=lab.duty==null?'--':Math.round(lab.duty/2.55)+'<small>%</small>';
- $('hmode').textContent=n.cooldown?'cooling down':lab.mode===1?`holding ${f(c.hold_c,1)} °C`:lab.mode===2?'watchdog tripped':lab.duty?'open loop':'idle';
+ $('hmode').textContent=n.cooldown?'cooling down':c.mode==='hold'?`holding ${f(c.hold_c,1)} °C`:lab.mode===2?'watchdog tripped':lab.duty?'open loop':'idle';
  $('lease').textContent=c.mode&&c.mode!=='off'?`This heater session ends in ${Math.floor(c.lease_s/60)}:${String(c.lease_s%60).padStart(2,'0')} unless someone changes it.`:'';
  setIf($('quiet'),'checked',c.quiet!==false);$('tmaxv').textContent=n.tmax;$('holdc').max=n.max_hold;
  const heatOK=n.sources.lab&&!n.cooldown&&n.temp_c!=null;
- $('b-heat').disabled=!heatOK;$('b-hold').disabled=!heatOK||!n.calib;
- $('calnote').textContent=n.calib?'':'needs a calibration';
+ $('b-heat').disabled=!heatOK;$('b-hold').disabled=!heatOK||!(n.calib||n.sources.xadc);
+ $('calnote').textContent=n.sources.xadc?'loop runs on the XADC':n.calib?'loop runs in the FPGA on a ring oscillator':'needs the XADC or a calibration';
  // ROs
  const ro=n.ro_mhz,rt=n.ro_temp_c;
  $('ros').innerHTML=ro?ro.map((v,k)=>`<tr${k===n.thermometer?' style="font-weight:600"':''}><td>ro${k}${k===n.thermometer?' ★':''}</td><td>${v==null?'<span class="note">no signal</span>':v.toFixed(2)}</td><td>${rt&&rt[k]!=null?rt[k].toFixed(1):'--'}</td></tr>`).join(''):'<tr><td colspan="3" class="note">no ring-oscillator data</td></tr>';
