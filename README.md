@@ -4,6 +4,26 @@ FPGA projects on a fully open toolchain (yosys + nextpnr-xilinx + prjxray):
 the RISC-V computer, plus PVT/thermal lab, TRNG, DDR3 bring-up and more under
 `fpga/`. (Formerly `qmtech-k7-riscv-computer`.)
 
+> **Public copy.** This is a filtered copy of a private working repo. Removed
+> from the whole history, because they belong to other companies and can't be
+> redistributed. Get them from the official sources:
+> - **Xilinx Platform Cable firmware** (`handoff/cable/xusb_hex/*.hex`, e.g.
+>   `xusb_xp2.hex`) and **Xilinx udev rules**: from an ISE or Vivado (Lab)
+>   install, e.g. `<Vivado>/data/xicom/`. `fpga/openXC7.mk` passes the
+>   firmware to openFPGALoader only if `handoff/cable/xusb_hex/xusb_xp2.hex`
+>   exists, so drop your copy there for cold-plug flashing with the clone cable.
+> - **Board and chip documentation** (`handoff/board-docs/`): QMTech's
+>   manuals, schematics and Vivado examples
+>   (https://github.com/ChinaQMTECH/QMTECH_XC7K325T_CORE_BOARD), Xilinx user
+>   guides (UG475/UG476/UG586, docs.amd.com), the Micron MT41K128M16 datasheet,
+>   and the Raspberry Pi CM4 datasheets.
+> - **The nextpnr-xilinx chip database** (`handoff/chipdb/xc7k325tffg676.bin`,
+>   462 MB, generated): build it with nextpnr-xilinx's `bbaexport.py` +
+>   `bbasm` for `xc7k325tffg676-1` (see `fpga/openXC7.mk`), then point
+>   `KINTEX7_CHIPDB` at its folder.
+>
+> Some docs still mention those paths and a homelab host by its old name.
+
 ## QMTech Kintex-7 RISC-V Computer
 
 Bring-up and demo projects for a **QMTech XC7K325T Kintex-7 development board**,
