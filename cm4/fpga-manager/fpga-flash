@@ -38,11 +38,14 @@ CONF = {
     "pvtd_unit": "pvtd",
     "serial_map": {},
     "trusted_uid": 0,
+    "lib": "/opt/fpga-manager",            # jtaginfo.py (root-owned)
 }
 # Tests only: sudo resets the environment, so this can't be set via the web path.
 if os.environ.get("FPGA_MANAGER_CONF"):
     CONF.update(json.load(open(os.environ["FPGA_MANAGER_CONF"])))
 FLAG = os.path.join(CONF["run_dir"], "foreign-bitstream")
+sys.path.insert(0, CONF["lib"])
+import jtaginfo                                 # noqa: E402
 ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,39}$")
 
 
@@ -216,6 +219,9 @@ def load(p, st):
     ok, msg = flash(path)
     if not ok:
         return False, msg
+    set_job(st, step="read status " + p["id"])
+    p["_jtag"] = jtaginfo.read(CONF["ofl"], CONF["firmware"])   # read-only: IDCODE, DNA, STAT
+    p["_jtag"]["by"] = "after flash"
     if p.get("owner") == "pvtd":
         pvtd_up()                             # pvtd does its own checks, keepalives, reloads
         return True, msg + "; pvtd started"
@@ -270,6 +276,8 @@ def switch(pid, who):
             loaded, result, rc = None, "failed", 4
         st = read_state()
         st.pop("job", None)
+        if loaded and byid[loaded].get("_jtag"):
+            st["jtag"] = byid[loaded]["_jtag"]
         st.update(project=loaded, sha256=byid[loaded].get("_sha") if loaded else None,
                   since=time.time(), by=who, result=result, message=msg)
         st.setdefault("history", []).insert(0, dict(t=time.time(), target=pid, loaded=loaded, by=who,

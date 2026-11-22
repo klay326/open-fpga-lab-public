@@ -2,6 +2,9 @@
 # fake openFPGALoader for off-board tests
 echo "$(date +%T) $*" >> "$MOCK_DIR/ofl.log"
 if [[ " $* " == *" --read-xadc "* ]]; then echo "{\"temp\": ${MOCK_TEMP:-$(cat "$MOCK_DIR/temp" 2>/dev/null || echo 40.5)}, \"vccint\": 1.0, \"vccaux\": 1.8, }"; exit 0; fi
+if [[ " $* " == *" --detect "* ]]; then printf 'index 0:\n\tidcode 0x3651093\n\tmanufacturer xilinx\n\tfamily kintex7\n\tmodel  xc7k325t\n\tirlength 6\n'; exit 0; fi
+if [[ " $* " == *" --read-dna "* ]]; then echo "DNA: 0x0123456789abcdef"; exit 0; fi
+if [[ " $* " == *" --read-register "* ]]; then echo "Register raw value: 0x401079fc"; exit 0; fi
 bit="${@: -1}"
 sleep "${MOCK_FLASH_S:-1}"
 if [ -f "$MOCK_DIR/fail-$(basename "$bit" .bit)" ]; then echo "Error: something"; exit 1; fi

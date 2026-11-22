@@ -47,7 +47,7 @@ conf = dict(catalog=os.path.join(T, "etc", "catalog.json"), store=os.path.join(T
             state=os.path.join(T, "state.json"), run_dir=os.path.join(T, "run"),
             ofl=os.path.join(HERE, "fake-ofl"), firmware="/nonexistent", freqs=[6000000, 1500000],
             queue=os.path.join(REPO, "tools", "fpga-queue"), systemctl=os.path.join(HERE, "fake-systemctl"),
-            serial_map={"/dev/serial0": slave_name}, trusted_uid=os.getuid(), trust_root=T)
+            serial_map={"/dev/serial0": slave_name}, trusted_uid=os.getuid(), trust_root=T, lib=FM)
 json.dump(conf, open(os.path.join(T, "conf.json"), "w"))
 pw = secrets.token_urlsafe(12)
 sys.path.insert(0, FM)
@@ -182,6 +182,11 @@ try:
     ok(not open(os.path.join(T, "queue", "holder")).read() if os.path.exists(os.path.join(T, "queue", "holder")) else True, "queue free after")
     time.sleep(3)
     ok(status()["xadc"] and abs(status()["xadc"]["temp_c"] - 40.5) < 0.01, "XADC watched while trng is loaded")
+    j = status()["jtag"]
+    ok(j and j["idcode"] == "0x3651093" and j["model"] == "xc7k325t" and j["dna"] == "0x0123456789abcdef"
+       and j["stat"]["done"] == 1 and j["stat"]["eos"] == 1 and j["stat"]["crc_error"] == 0, "JTAG status read after flash and decoded")
+    time.sleep(10.5)
+    ok(any(h[4] == "manager" and abs(h[1] - 40.5) < 0.01 for h in status()["hist"]), "temperature history from the watchdog")
     code, d, _ = req("GET", "/")
     ok(code == 302, "/ redirects to the manager while pvtd is down")
 

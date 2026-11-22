@@ -32,6 +32,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)                       # python -I doesn't add the script dir
+import jtaginfo                                # noqa: E402
 SESSION_S = 12 * 3600
 SCRYPT = dict(n=1 << 15, r=8, p=1, maxmem=64 << 20)
 
@@ -149,6 +151,8 @@ class Manager:
         self.xadc, self.xadc_t, self.xadc_err = None, 0.0, None
         self.last_fallback = 0.0
         self.watch = dict(active=False, why="starting")
+        self.jtag_live = None                    # STAT etc. read while watching
+        self.hist = collections.deque(maxlen=180)  # (t, temp, vccint, vccaux, source), 10 s apart
         self.events = collections.deque(maxlen=30)
 
     # ---------------------------------------------------------- data
@@ -274,6 +278,7 @@ class Manager:
                10: "board busy", 2: "refused"}.get(rc, "exit %d" % rc)
         self.note("switch to %s: %s" % (pid, res))
         self._pvtd = None                     # pvtd may have stopped/started
+        self.jtag_live = None                 # belongs to the old design
         with self.lock:
             self.job = None
             self.last_result = dict(target=pid, rc=rc, result=res, output=out, t=time.time())
@@ -360,6 +365,8 @@ class Manager:
                     fault = "die at %.1f C (limit %s C)" % (self.xadc["temp_c"], cat.get("max_temp_c", 80))
             except Exception as e:
                 self.xadc_err = type(e).__name__
+        if self.a.xadc and time.time() - ((self.jtag_live or {}).get("t") or 0) > 60:
+            self.jtag_live = dict(jtaginfo.read(self.a.ofl, self.a.firmware), by="watchdog")
         h = p.get("health") or {}
         if h.get("type") == "uart_line" and self.tail:
             lim = 3 * float(h.get("within_s", 30))
@@ -373,6 +380,27 @@ class Manager:
                 self.start_switch(cat["fallback"], "watchdog", automatic=True)
             else:
                 self.watch["fault"] = fault + " (fallback already tried recently)"
+
+    def history(self):
+        """Temperature/voltage every 10 s: from pvtd while it runs (it owns the
+        cable then), else from our own XADC reads. Memory only, last 30 min."""
+        while True:
+            time.sleep(10 - time.time() % 10)
+            pt = None
+            try:
+                if self.pvtd_active():
+                    c = http.client.HTTPConnection(self.a.pvtd_host, self.a.pvtd_port, timeout=5)
+                    c.request("GET", "/api/now")
+                    d = json.loads(c.getresponse().read())
+                    if d.get("temp_c") is not None and d.get("temp_source") == "xadc":
+                        pt = (time.time(), d["temp_c"], d.get("vccint_v"), d.get("vccaux_v"), "pvtd")
+                elif self.xadc and time.time() - self.xadc_t < 15:
+                    x = self.xadc
+                    pt = (time.time(), x["temp_c"], x["vccint_v"], x["vccaux_v"], "manager")
+            except (OSError, ValueError):
+                pass
+            if pt:
+                self.hist.append(tuple(round(v, 4) if isinstance(v, float) else v for v in pt))
 
     # ---------------------------------------------------------- status
     def status(self, user):
@@ -407,11 +435,14 @@ class Manager:
             xadc=self.xadc if self.xadc and time.time() - self.xadc_t < 60 else None,
             xadc_t=self.xadc_t or None,
             panel=panel, events=list(self.events)[:10],
+            jtag=max([j for j in (st.get("jtag"), self.jtag_live) if j], key=lambda j: j.get("t") or 0, default=None),
+            hist=list(self.hist),
             limits=dict(min_gap_s=self.a.min_gap, per_hour=self.a.per_hour),
         )
 
     def run(self):
         threading.Thread(target=self.watcher, daemon=True).start()
+        threading.Thread(target=self.history, daemon=True).start()
         srv = ThreadingHTTPServer((self.a.bind, self.a.http), make_handler(self))
         srv.daemon_threads = True
         print("fpga-manager on %s:%d" % (self.a.bind, self.a.http), flush=True)

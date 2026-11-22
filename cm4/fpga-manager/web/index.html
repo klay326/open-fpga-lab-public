@@ -35,6 +35,12 @@ pre{background:var(--code);border:1px solid var(--line);border-radius:7px;paddin
 table{border-collapse:collapse;width:100%;font-size:13px}td{padding:4px 6px;border-top:1px solid var(--line);vertical-align:top}
 .msg{min-height:20px;font-size:13.5px}
 .err{color:var(--bad)}
+.bits{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:4px 12px;font-size:13px;margin-top:8px}
+.bits span b{font-weight:600}
+.spark{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px}
+@media (max-width:760px){.spark{grid-template-columns:1fr}}
+.spark svg{width:100%;height:60px;display:block}
+.kv{font-size:13.5px}.kv code{font-size:12.5px}
 form{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
 code{font:12.5px ui-monospace,Menlo,monospace}
 a{color:var(--acc)}
@@ -62,6 +68,11 @@ a{color:var(--acc)}
 <section class="card" id="panelcard">
   <h2 id="paneltitle">Panel</h2>
   <div id="panel"></div>
+</section>
+
+<section class="card">
+  <h2>JTAG status <span class="mute" style="text-transform:none;letter-spacing:0;font-weight:400">(read-only)</span></h2>
+  <div id="jtag"></div>
 </section>
 
 <section class="card">
@@ -171,9 +182,38 @@ function renderHist(){
   const H=S.history||[];
   $("hist").innerHTML=H.length?H.map(h=>`<tr><td class="mute" style="white-space:nowrap">${hm(h.t)}</td><td><b>${esc(h.target)}</b>${h.loaded&&h.loaded!==h.target?" → "+esc(h.loaded):""}<br><span class="mute">${esc(h.by)} · ${esc(h.result)} · ${h.secs} s</span></td></tr>`).join(""):'<tr><td class="mute">none yet</td></tr>';
 }
+const BITS=[["done","DONE",1],["init_b","INIT_B",1],["init_complete","INIT complete",1],["release_done","release done",1],
+  ["eos","EOS (startup done)",1],["gwe","GWE",1],["gts_cfg_b","GTS_CFG_B",1],["mmcm_lock","MMCM lock",null],["dci_match","DCI match",null],
+  ["crc_error","CRC error",0],["id_error","ID error",0],["dec_error","decrypt error",0],["xadc_over_temp","XADC over-temp",0],["part_secured","secured",null]];
+function spark(pts,i,unit,dec,lo,hi){
+  const v=pts.map(p=>p[i]).filter(x=>x!=null);
+  if(v.length<2)return `<div class="mute" style="font-size:13px">collecting…</div>`;
+  let mn=Math.min(...v),mx=Math.max(...v);if(mx-mn<(hi-lo)/10){const c=(mx+mn)/2;mn=c-(hi-lo)/20;mx=c+(hi-lo)/20}
+  const t0=pts[0][0],t1=pts[pts.length-1][0]||t0+1,W=300,H=56;
+  const xy=pts.filter(p=>p[i]!=null).map(p=>[((p[0]-t0)/(t1-t0||1))*W,H-4-((p[i]-mn)/(mx-mn||1))*(H-8)]);
+  const d="M"+xy.map(q=>q[0].toFixed(1)+","+q[1].toFixed(1)).join("L");
+  return `<div class="kv"><b>${v[v.length-1].toFixed(dec)} ${unit}</b> <span class="mute">min ${Math.min(...v).toFixed(dec)} · max ${Math.max(...v).toFixed(dec)} · ${Math.round((t1-t0)/60)} min</span></div>
+  <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"><path d="${d}" fill="none" stroke="var(--acc)" stroke-width="1.5" vector-effect="non-scaling-stroke"/></svg>`;
+}
+function renderJtag(){
+  const j=S.jtag,H=S.hist||[],el=$("jtag");let h="";
+  if(j){
+    h+=`<div class="kv">${esc(j.model||"?")} <span class="mute">(${esc(j.family||"")})</span> · IDCODE <code>${esc(j.idcode||"?")}</code>${j.dna?` · DNA <code>${esc(j.dna)}</code>`:""}
+      <span class="mute"> · read ${ago(j.t)} ago, ${esc(j.by||"")}</span></div>`;
+    if(j.stat){
+      h+=`<div class="kv" style="margin-top:4px">STAT <code>${esc(j.stat_raw)}</code> <span class="mute">· startup state ${j.stat.startup_state} · mode ${j.stat.mode} · bus x${[1,8,16,32][j.stat.bus_width]}</span></div><div class="bits">`+
+      BITS.map(([k,l,good])=>{const v=j.stat[k];const c=good===null?"":(v===good?"color:var(--ok)":"color:var(--bad)");return `<span style="${c}">${v?"●":"○"} ${esc(l)} <b>${v}</b></span>`}).join("")+"</div>";
+    }
+    if(j.errors&&j.errors.length)h+=`<div class="err" style="font-size:13px;margin-top:4px">${j.errors.map(esc).join("; ")}</div>`;
+  }else h+=`<div class="mute">No status read yet. It's read after each web flash, and every minute while the manager watches a project.</div>`;
+  h+=`<div class="spark"><div><div class="mute" style="font-size:13px">Die temperature (XADC)</div>${spark(H,1,"°C",1,30,80)}</div>
+     <div><div class="mute" style="font-size:13px">VCCINT</div>${spark(H,2,"V",3,0.95,1.05)}</div></div>
+     <div class="mute" style="font-size:12.5px;margin-top:4px">${H.length?"source: "+(H[H.length-1][4]==="pvtd"?"pvtd (playground)":"manager watchdog")+"; ":""}last 30 min, kept in memory. Nothing on this page can write over JTAG.</div>`;
+  el.innerHTML=h;
+}
 async function refresh(){
   if(busy)return;busy=true;
-  try{const [c,j]=await api("/manager/api/status");if(c===200){S=j;renderAuth();renderNow();renderPanel();renderProjects();renderQueue();renderHist()}}
+  try{const [c,j]=await api("/manager/api/status");if(c===200){S=j;renderAuth();renderNow();renderPanel();renderJtag();renderProjects();renderQueue();renderHist()}}
   catch(e){$("job").innerHTML='<span class="err">can\'t reach the manager</span>'}
   finally{busy=false}
 }

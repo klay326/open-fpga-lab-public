@@ -32,7 +32,7 @@ if mode == "--rehash":
 if bad:
     print("warning: %d source bitstream(s) differ from the catalog; the Pi keeps the catalogued builds" % bad)
 PY
-cp -R "$HERE"/{catalog.json,fpga-flash,fpga_manager.py,install.sh,web,systemd} "$STAGE/"
+cp -R "$HERE"/{catalog.json,fpga-flash,fpga_manager.py,jtaginfo.py,install.sh,web,systemd} "$STAGE/"
 cp "$REPO/tools/fpga-queue" "$STAGE/"
 rsync -a --delete -e "ssh -i $KEY" "$STAGE/" "$PI:fpga-manager-stage/"
 ssh -i "$KEY" "$PI" "cd fpga-manager-stage && sudo ${MIGRATE_QUEUE:+MIGRATE_QUEUE=$MIGRATE_QUEUE} ./install.sh"

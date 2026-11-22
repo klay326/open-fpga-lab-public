@@ -50,6 +50,7 @@ touch /etc/fpga-manager/users.json; chown root:fpgamgr /etc/fpga-manager/users.j
 install -m 755 "$HERE/fpga-flash" /usr/local/sbin/fpga-flash
 install -d /opt/fpga-manager/web
 install -m 644 "$HERE/fpga_manager.py" /opt/fpga-manager/fpga_manager.py
+install -m 644 "$HERE/jtaginfo.py" /opt/fpga-manager/jtaginfo.py
 install -m 644 "$HERE/web/index.html" /opt/fpga-manager/web/index.html
 install -m 440 "$HERE/systemd/sudoers" /etc/sudoers.d/fpga-manager
 visudo -cf /etc/sudoers.d/fpga-manager >/dev/null
