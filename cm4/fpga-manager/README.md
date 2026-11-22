@@ -151,6 +151,14 @@ There is no interactive JTAG on the page.
 cm4/fpga-manager/publish.sh        # from the Mac
 ```
 
+`publish.sh` needs `PI` (ssh destination) and `KEY` (ssh key), either from the
+environment or from `~/.config/fpga-manager/publish.env`, which is not in the repo:
+
+```bash
+PI=<user>@<cm4-host>
+KEY=$HOME/.ssh/<cm4-key>
+```
+
 Logs: `journalctl -u fpga-manager -f`. LAN: `http://<cm4-ip>:8091/manager/`.
 CLI on the Pi: `sudo /usr/local/sbin/fpga-flash switch trng --by <user>`, `/usr/local/sbin/fpga-flash state`.
 

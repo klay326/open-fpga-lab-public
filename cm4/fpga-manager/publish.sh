@@ -8,7 +8,9 @@ set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"; REPO="$(cd "$HERE/../.." && pwd)"
 # bitstreams are gitignored: take them from the main checkout, not a worktree
 BIT_REPO="${BIT_REPO:-$(git -C "$REPO" worktree list --porcelain | sed -n '1s/^worktree //p')}"
-PI="${PI:?set PI=<user>@<cm4-host>}"; KEY="${KEY:?set KEY=<path to the ssh key for the CM4>}"
+# where the CM4 is: PI and KEY from the environment or ~/.config/fpga-manager/publish.env (not in the repo)
+[ -f "$HOME/.config/fpga-manager/publish.env" ] && . "$HOME/.config/fpga-manager/publish.env"
+PI="${PI:?set PI=<user>@<cm4-host> (env or ~/.config/fpga-manager/publish.env)}"; KEY="${KEY:?set KEY=<path to the ssh key for the CM4>}"
 STAGE="$(mktemp -d)"; trap 'rm -rf "$STAGE"' EXIT
 python3 -I - "$BIT_REPO" "$HERE/catalog.json" "$STAGE" "${1:-}" <<'PY'
 import hashlib, json, os, shutil, sys
