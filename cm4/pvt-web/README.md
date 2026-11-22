@@ -134,8 +134,11 @@ Logs: `journalctl -u pvtd -f`. LAN: `curl http://10.0.0.144:8090/api/now`.
 ## Publishing
 
 - Route in `/etc/cloudflared/config.yml` on homelab-host (tunnel
-  `94765154-...`): `fpga.klayshomelab.com -> http://10.0.0.144:8090`
-  (backup `config.yml.bak-fpga`).
+  `94765154-...`): `fpga.klayshomelab.com -> http://10.0.0.144:8091`, i.e.
+  via fpga-manager (see `cm4/fpga-manager/README.md`), which proxies `/` and
+  `/api/*` to pvtd on :8090 while the playground is loaded and serves the
+  project manager at `/manager/`. (Backups: `config.yml.bak-fpga`,
+  `config.yml.bak-fpga-manager`.)
 - Proxied CNAME to `<tunnel>.cfargotunnel.com`.
 - No Cloudflare Access, on purpose.
 - Registered in Command Center (SERVICES row + `cc-versions.py` spec) and as

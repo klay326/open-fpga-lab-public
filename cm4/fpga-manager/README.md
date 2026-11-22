@@ -132,7 +132,7 @@ cm4/fpga-manager/publish.sh        # from the Mac
 ```
 
 Logs: `journalctl -u fpga-manager -f`. LAN: `http://10.0.0.144:8091/manager/`.
-CLI on the Pi: `sudo fpga-flash switch trng --by kladams`, `fpga-flash state`.
+CLI on the Pi: `sudo /usr/local/sbin/fpga-flash switch trng --by kladams`, `/usr/local/sbin/fpga-flash state`.
 
 ## Public: one site for everything
 
@@ -160,3 +160,10 @@ python3 -I cm4/fpga-manager/test/run_mock.py                       # Pi
 
 34 checks: auth, CSRF, rate limits, hash tamper, busy queue, the pvtd flag,
 watchdog fallbacks (silent UART, 85 °C, failed flash), proxying. No hardware is touched.
+
+On the board, 2026-11-22, through the web API with a temporary account:
+playground -> trng (35 s; done 1 at 6 MHz; pvtd stopped and held down; XADC
+watchdog read 38.1 C) -> playground (35 s; done 1; flag cleared; pvtd started;
+proxied `/api/now` returned live lab data at 37.8 C). The queue was taken and
+released as web-flasher each time. While pvt-web waited ahead of it, the switch
+back was correctly refused until web-flasher's reserved slot reached the front.
