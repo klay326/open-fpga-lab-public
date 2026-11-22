@@ -10,10 +10,11 @@
 //   rN = RO/2 edges counted in a 2^20-cycle (20.97 ms) gate of the 50 MHz clock:
 //   f_RO = 2 * rN * 50e6 / 2^20.
 //
-// The XADC block below is compiled only with -DXADC_FABRIC. It synthesises in
-// yosys, but nextpnr-xilinx has no XADC bel (nextpnr-xilinx-meta has no
-// site_type_XADC.json) and prjxray-db has no MONITOR-tile segbits, so it cannot
-// be placed today -- see README.md. With it, each line is prefixed by
+// The XADC block below is compiled only with -DXADC_FABRIC (make XADC_FABRIC=1).
+// With the nextpnr-xilinx XADC bel patch in tools/nextpnr-xilinx it places,
+// routes and loads, but on hardware the DRP never answers: prjxray-db has no
+// MONITOR-tile segbits, so whatever enables the fabric port is not in the
+// bitstream -- see README.md. With it, each line is prefixed by
 //
 //      X tttt iiii aaaa bbbb CCCC DDDD
 //

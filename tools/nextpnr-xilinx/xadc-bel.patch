@@ -1,0 +1,48 @@
+diff --git a/xilinx/fasm.cc b/xilinx/fasm.cc
+index ec404ca0..cf957ddf 100644
+--- a/xilinx/fasm.cc
++++ b/xilinx/fasm.cc
+@@ -451,6 +451,12 @@ struct FasmBackend
+                 // FIXME: PPIPs missing for DSPs
+                 return;
+             }
++            if (boost::starts_with(tile_name, "MONITOR_")) {
++                // MONITOR_{BOT,MID,TOP}_FUJI2 (XADC) pips are all 1:1 hardwires
++                // (every wire has exactly one source and one sink) with no config
++                // bits; prjxray-db has neither segbits nor ppips for these tiles.
++                return;
++            }
+             std::string orig_dst_name = dst_name;
+             if (boost::starts_with(tile_name, "RIOI3_SING")
+                 || boost::starts_with(tile_name, "LIOI3_SING")
+diff --git a/xilinx/pack_io_xc7.cc b/xilinx/pack_io_xc7.cc
+index 0c312e26..e64a8663 100644
+--- a/xilinx/pack_io_xc7.cc
++++ b/xilinx/pack_io_xc7.cc
+@@ -1241,6 +1246,7 @@ void XC7Packer::pack_cfg()
+     cfg_rules[id_FRAME_ECCE2].new_type  = id_FRAME_ECC_FRAME_ECC;
+     cfg_rules[id_STARTUPE2].new_type    = id_STARTUP_STARTUP;
+     cfg_rules[id_USR_ACCESSE2].new_type = id_USR_ACCESS_USR_ACCESS;
++    cfg_rules[id_XADC].new_type         = ctx->id("XADC_XADC");
+     generic_xform(cfg_rules);
+ 
+     for (auto cell : sorted(ctx->cells)) {
+@@ -1264,6 +1270,18 @@ void XC7Packer::pack_cfg()
+             // Affects any design that instantiates e.g. STARTUPE2 to source a clock from
+             // CFGMCLK, or ICAPE2 / DNA_PORT for configuration access.
+             preplace_unique(ci);
++        } else if (ci->type == ctx->id("XADC_XADC")) {
++            // VP/VN and VAUXP/VAUXN are analog inputs fed only from their dedicated
++            // pads (VAUX via the analog-capable IOBs); the fabric has no route to them.
++            // A constant tie means "unused", so drop it rather than make the router
++            // look for a path that doesn't exist.
++            for (auto pin : {std::string("VP"), std::string("VN")})
++                disconnect_constant_port(ci, ctx->id(pin));
++            for (int i = 0; i < 16; i++) {
++                disconnect_constant_port(ci, ctx->id("VAUXP" + std::to_string(i)));
++                disconnect_constant_port(ci, ctx->id("VAUXN" + std::to_string(i)));
++            }
++            preplace_unique(ci);
+         }
+     }
+ }

@@ -27,6 +27,9 @@ TOP_VERILOG ?= ${TOP}.v
 
 PNR_DEBUG ?= # --verbose --debug
 
+# Verilog defines for yosys, e.g. YOSYS_DEFINES = XADC_FABRIC FOO=2 -> -DXADC_FABRIC -DFOO=2
+YOSYS_DEFINES ?=
+
 BOARD ?= UNKNOWN
 
 # JTAG: the Waveshare Xilinx Platform Cable USB clone (03fd:0013). It runs the
@@ -67,7 +70,7 @@ program: ${PROJECT}.bit
 	openFPGALoader ${JTAG_LINK} --bitstream $<
 
 ${PROJECT}.json: ${TOP_VERILOG} ${ADDITIONAL_SOURCES}
-	yosys -p "synth_xilinx -flatten -abc9 ${SYNTH_OPTS} -arch xc7 -top ${TOP_MODULE}; write_json ${PROJECT}.json" $< ${ADDITIONAL_SOURCES}
+	yosys $(addprefix -D,${YOSYS_DEFINES}) -p "synth_xilinx -flatten -abc9 ${SYNTH_OPTS} -arch xc7 -top ${TOP_MODULE}; write_json ${PROJECT}.json" $< ${ADDITIONAL_SOURCES}
 
 # The chip database only needs to be generated once
 # that is why we don't clean it with make clean
