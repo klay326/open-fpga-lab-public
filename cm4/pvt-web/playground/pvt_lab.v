@@ -43,7 +43,7 @@
 `default_nettype none
 
 module pvt_lab #(
-    parameter HBANKS = 48,
+    parameter HBANKS = 50,   // playground: 5 groups x 10 banks
     parameter HBITS  = 2048
 ) (
     input  wire       clk,      // 50 MHz, F22
@@ -268,16 +268,43 @@ module pvt_lab #(
     // on-phase, so an idle heater draws no clock-tree power (configuration
     // start-up no longer sees the step of ~200k clocked FFs), and the groups'
     // PWM phases are staggered by 256/HGROUPS to smooth the supply current.
-    localparam HGROUPS = 6;
+    //
+    // playground: the heater runs at HMHZ (100 MHz, from a PLL) instead of the
+    // 50 MHz system clock, for about twice the power. The PWM counter and the
+    // BUFGCE enables run in that clock domain; duty (quasi-static, changes at
+    // most every few ms) is brought across with a 2-FF synchroniser. Until the
+    // PLL locks the heater stays off.
+    // 5 groups (not 6): with the extra free-running 100 MHz BUFG, 6 groups
+    // ran a clock region out of global clock lines (nextpnr failed to route).
+    localparam HGROUPS = 5;
+    wire hfb, hpll, hpll_locked, hclk_free;
+    PLLE2_ADV #(
+        .BANDWIDTH("OPTIMIZED"), .COMPENSATION("ZHOLD"), .DIVCLK_DIVIDE(1),
+        .CLKFBOUT_MULT(20), .CLKFBOUT_PHASE(0.0), .CLKIN1_PERIOD(20.0),   // 1000 MHz VCO
+        .CLKOUT0_DIVIDE(10), .CLKOUT0_PHASE(0.0), .CLKOUT0_DUTY_CYCLE(0.5) // 100 MHz heater
+    ) hpll_i (
+        .CLKIN1(clk), .CLKIN2(1'b0), .CLKINSEL(1'b1),
+        .CLKFBIN(hfb), .CLKFBOUT(hfb),
+        .CLKOUT0(hpll), .CLKOUT1(), .CLKOUT2(), .CLKOUT3(), .CLKOUT4(), .CLKOUT5(),
+        .RST(1'b0), .PWRDWN(1'b0), .LOCKED(hpll_locked),
+        .DADDR(7'd0), .DCLK(1'b0), .DEN(1'b0), .DI(16'd0), .DWE(1'b0), .DO(), .DRDY()
+    );
+    BUFG hbufg (.I(hpll), .O(hclk_free));
+    reg [7:0] duty_h1 = 8'd0, duty_h = 8'd0;
+    reg [1:0] lock_h = 2'b00;
+    always @(posedge hclk_free) begin
+        duty_h1 <= duty; duty_h <= duty_h1;
+        lock_h  <= {lock_h[0], hpll_locked};
+    end
     reg [7:0] pwm = 8'd0;
-    always @(posedge clk) pwm <= pwm + 1'b1;
+    always @(posedge hclk_free) pwm <= pwm + 1'b1;
     genvar b, gg;
     generate for (gg = 0; gg < HGROUPS; gg = gg + 1) begin : hgrp
         wire [7:0] ph = pwm + (gg * 256 / HGROUPS);
         reg ce = 1'b0;
-        always @(posedge clk) ce <= (ph < duty);
+        always @(posedge hclk_free) ce <= lock_h[1] && (ph < duty_h);
         wire hclk;
-        BUFGCE hbuf (.I(clk), .CE(ce), .O(hclk));
+        BUFGCE hbuf (.I(hpll), .CE(ce), .O(hclk));
         for (b = 0; b < HBANKS / HGROUPS; b = b + 1) begin : bank
             heater_bank #(.N(HBITS)) hb (.clk(hclk));
         end

@@ -40,8 +40,18 @@ Differences from `fpga/pvt-lab`, from testing on hardware:
   0 in the first playground build. nextpnr's timing for it was normal every
   time. The likely cause is a routing resource in that edge tile that
   prjxray-db doesn't describe correctly; this hasn't been proven.
-- **Droop monitor tap 0x30** (pvtd `--droop-tap`, set at start). It depends on routing: 0x2C in the first playground build, 0x30 after the ro1 move; taps below it saturate
-  at 256.
+- **Heater at 100 MHz** from a PLL (5 BUFGCE groups x 10 banks; 6 groups
+  ran a clock region out of global lines). Full power from 41 C: +21.6 C in
+  30 s, hitting the 72 C cut-out after about 45 s; the 50 MHz heater did
+  +10.3 C in 30 s and plateaued near 61-63 C. VCCINT sags to ~0.988 V at full
+  power (0.994 V at 50 MHz).
+- **Droop monitor tap**: pvtd finds it at start (binary search for the edge
+  nearest mid-range) because it moves with routing: 0x2C, 0x30, 0x28 in three
+  builds.
+- **ro1 is still fragile.** It worked at SLICE_X145Y20 in one build (490 MHz)
+  and read 0 at the same LOC in the next, so it isn't the edge column. Each
+  ring's divided output is routed as a global clock by nextpnr; the suspect
+  is a clock-routing path that prjxray encodes wrongly. Not yet fixed.
 
 Each new `playground.bit` restarts the RO self-calibration: `install.sh`
 writes `/var/lib/pvtd/calib_epoch` and pvtd fits only samples after it.
@@ -72,7 +82,7 @@ A15). It's no longer needed.
 | `GET /api/now` | everything live |
 | `GET /api/history?h=24` | downsampled history (max 720 h) |
 | `GET /api/trng/random` | 32 bytes: SHA-256 over the raw bits received since the last call |
-| `POST /api/control` | `{"action": ...}`: `heater {duty 0-255}`, `hold {temp_c 30-60}`, `off`, `quiet {on}`, `clear`, `droop {tap 0-63}`, `trng {run}`, `trng_rate {div 0-9}`, `trng_clear` |
+| `POST /api/control` | `{"action": ...}`: `heater {duty 0-255}`, `hold {temp_c 30-65}`, `off`, `quiet {on}`, `clear`, `droop {tap 0-63}`, `trng {run}`, `trng_rate {div 0-9}`, `trng_clear` |
 
 The control API is public on purpose (the user's choice). What limits it:
 
@@ -82,7 +92,7 @@ The control API is public on purpose (the user's choice). What limits it:
 - There is no path from HTTP to JTAG, files or a shell.
 - The heater is refused unless there is a trusted temperature (XADC, or a
   good RO fit). It turns off at `--tmax` 72 C and stays locked until 62 C.
-- Hold setpoints are capped at 60 C (full heater plateaus near 63 C in open air).
+- Hold setpoints are capped at 65 C.
 - Every heater/hold session ends after 10 min (`--lease`).
 - The pvt_lab watchdog drops the heater 2.7 s after pvtd stops sending
   keepalives.

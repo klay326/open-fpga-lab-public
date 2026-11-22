@@ -609,9 +609,43 @@ class Pvtd:
         return 200, "ok"
 
     # -------------------------------------------- loops
+    def tune_droop(self):
+        """Binary-search the droop-monitor tap that puts the edge nearest mid-range
+        (avg position falls as the tap rises; the right tap moves with routing)."""
+        def avg_at(tap):
+            self.lab.send("T%02X" % tap)
+            seen, t0 = None, time.time()
+            n = 0
+            while time.time() - t0 < 3:                 # skip the line in flight, use the next
+                time.sleep(0.05)
+                d = self.lab.latest(2)
+                if d and id(d) != seen:
+                    seen, n = id(d), n + 1
+                    if n >= 3:
+                        return d.get("droop_avg")
+            return None
+        lo, hi, best = 0, 63, None
+        while lo <= hi:
+            mid = (lo + hi) // 2
+            a = avg_at(mid)
+            if a is None:
+                return
+            if best is None or abs(a - 128) < abs(best[1] - 128):
+                best = (mid, a)
+            if a > 128:
+                lo = mid + 1
+            else:
+                hi = mid - 1
+        if best:
+            with self.lock:
+                self.ctl["droop_tap"] = best[0]
+            self.lab.send("T%02X" % best[0])
+            self.note("pvtd", "droop monitor tuned: tap %d (edge at %.0f/256)" % best)
+
     def supervisor(self):
         """1 Hz: keepalive, lease, temperature guard, self-calibration, FPGA reload."""
         armed_for = None
+        tuned = self.args.droop_tap is not None
         last_fit = 0.0
         while True:
             time.sleep(1)
@@ -621,6 +655,9 @@ class Pvtd:
                 self.last_lab = time.time()
                 if d.get("mode") == 2 and self.ctl["mode"] == "off":
                     self.lab.send("H00")                       # clear a stale watchdog trip
+                if not tuned:
+                    tuned = True
+                    self.tune_droop()
                 if armed_for != id(self.cal):
                     self.lab.send("W%d" % self.ctl["quiet"])
                     self.arm_hw_alarm()
@@ -664,6 +701,7 @@ class Pvtd:
                 self.note("pvtd", "no data from the FPGA for 90 s, reloading the playground design")
                 self.jtag.load(self.args.bitstream)
                 self.last_lab = time.time()
+                tuned = self.args.droop_tap is not None
 
     def refit(self):
         # only samples from the current bitstream (install.sh writes calib_epoch
@@ -827,10 +865,10 @@ def main():
     ap.add_argument("--bitstream", default="/usr/local/share/pvtd/playground.bit",
                     help="reloaded over JTAG if the FPGA goes quiet ('' = never)")
     ap.add_argument("--calib", default="/etc/pvtd/calib.json")
-    ap.add_argument("--droop-tap", type=lambda v: int(v, 0), default=0x30,
-                    help="droop-monitor delay tap set at start (0x30 puts the edge mid-range on the current playground.bit; re-sweep after a rebuild)")
+    ap.add_argument("--droop-tap", type=lambda v: int(v, 0), default=None,
+                    help="fixed droop-monitor delay tap; default: found automatically (edge mid-range)")
     ap.add_argument("--tmax", type=float, default=72.0, help="heater cut-off, C")
-    ap.add_argument("--max-hold", type=int, default=60, help="highest hold setpoint, C")
+    ap.add_argument("--max-hold", type=int, default=65, help="highest hold setpoint, C")
     ap.add_argument("--lease", type=float, default=600, help="s a heater/hold session lasts")
     ap.add_argument("--rate", type=int, default=20, help="control requests per minute per visitor")
     Pvtd(ap.parse_args()).run()
