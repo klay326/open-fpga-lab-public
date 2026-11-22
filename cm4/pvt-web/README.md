@@ -76,6 +76,16 @@ rms (the regulator). At full heater, the heater's tone at 1.953 MHz
 (100 MHz / 256 x 5 groups) and 5.1 taps rms. IR drop at full heater runs
 from -22.5k ppm (centre-top) to -30.6k ppm (bottom row).
 
+Die-map temperature calibration (open): the grid reads its 64 rings one at a
+time (~5 ms each), so heater switching lands on some rings and not others.
+That includes the quiet window (heater off for 1 of every 4 21-ms gates),
+the PWM, and the hold loop's duty changes every 3 s. Under load that is a
+~23,000 ppm effect per ring, against ~200 ppm/C of temperature. Fitting
+per-ring tempcos against the XADC on such frames failed (2,400 ppm of scatter
+at a fixed temperature). The next try: quiet window off and steady duty, or
+pvt-lab's two-heater-on-frames method, where the IR drop cancels. Until then
+the page's Temperature view says it isn't reliable, and Change shows heating.
+
 ## pvtd (`pvtd.py`, Python 3 stdlib only)
 
 - Reads the pvt_lab line (ROs, heater duty/mode, TDC, droop min/avg/max,
@@ -91,6 +101,36 @@ from -22.5k ppm (centre-top) to -30.6k ppm (bottom row).
   if the FPGA sends nothing for 90 s (power cycle), at most every 15 min.
 - History: SQLite `/var/lib/pvtd/pvt.db`, a sample every 10 s, kept 30 days.
 
+### Other views (pvtd, no extra hardware)
+
+- **Console**: a ring buffer of what the FPGA sends (R lines, die-map
+  summaries, scope dump markers), XADC reads, TRNG summaries, commands sent,
+  and pvtd events. A small command language (`help`, `status`, `heater`,
+  `hold`, `off`, `quiet`, `droop`, `clear`, `scope`, `ir`, `trng`, `roll`,
+  `id`, `thermal`) maps onto the same validated, rate-limited actions.
+  Nothing raw reaches the UART.
+- **Chip fingerprint (RO PUF)**: bit i = die-map ring i faster than the die
+  median. 64-bit ID, plus a 32-bit key from the rings furthest from the
+  median in a heater-off reference frame (`/var/lib/pvtd/puf_ref.json`, one
+  per bitstream). Measured: 0/64 bits flipped from 38 to 65 C. The ID changes
+  with each rebuild (routing near the rings), so it is stable per bitstream
+  only.
+- **Thermal model**: an output-error fit of T = ambient + g1*lp(u, tau1) +
+  g2*lp(u, tau2) to the XADC and heater history (3 s samples, last 2 h, a
+  grid search on the two time constants). It isn't biased by XADC noise,
+  unlike an ARX fit. Measured: ambient 39.7 C, tau 14 s (15 C) and 126 s
+  (40 C), +55 C at full 100 MHz heater, fit rms 0.29 C.
+- **Speed vs temperature**: heater-off samples binned by XADC temperature:
+  ring speed shift, droop-monitor edge position, carry-chain ps per tap.
+- **TRNG entropy vs temperature**: min-entropy and P(1) logged every 10 s.
+  Measured on this build: H_min 0.883 / 0.887 / 0.885 and P(1) 0.463-0.465
+  at 40 / 50 / 60 C, flat within the scatter. The bias depends on placement
+  (P(1) 0.473 in the standalone TRNG build).
+- **Scope waterfall**: one background capture a minute (6.25 MS/s, heater
+  untouched), 160 log-spaced bins from 10 kHz to 3.1 MHz, the last hour.
+- **History**: a 1 s in-memory buffer for chart ranges up to 1 h, plus the
+  hold setpoint, drawn as a dashed line.
+
 ### HTTP API
 
 | | |
@@ -98,6 +138,8 @@ from -22.5k ppm (centre-top) to -30.6k ppm (bottom row).
 | `GET /` | the page (`web/index.html`) |
 | `GET /api/now` | everything live |
 | `GET /api/history?h=24` | downsampled history (max 720 h) |
+| `GET/POST /api/console` | log lines after `?after=n` / `{"cmd": "..."}` (80 chars max) |
+| `GET /api/bytemp`, `/api/trng/vstemp`, `/api/waterfall` | binned-by-temperature data, TRNG vs temperature, background spectra |
 | `GET /api/scope` | last scope capture: trace, spectrum (1024 max-hold bins), top peaks |
 | `GET /api/trng/random` | 32 bytes: SHA-256 over the raw bits received since the last call |
 | `POST /api/control` | `{"action": ...}`: `heater {duty 0-255}`, `hold {temp_c 30-65}`, `off`, `quiet {on}`, `clear`, `droop {tap 0-63}`, `trng {run}`, `trng_rate {div 0-9}`, `trng_clear`, `ir_map`, `scope {dec 0-8, load}` |

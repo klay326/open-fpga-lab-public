@@ -93,6 +93,30 @@ def open_serial(dev, baud, write=True):
     return fd
 
 
+# ------------------------------------------------------------------ console log
+class Console:
+    """Ring buffer of what the FPGA says (abbreviated where lines are huge)
+    plus pvtd events, for the read side of the web console."""
+
+    def __init__(self, n=600):
+        self.lock = threading.Lock()
+        self.buf = collections.deque(maxlen=n)
+        self.seq = 0
+        self.qn = 0
+
+    def add(self, kind, text):
+        with self.lock:
+            self.seq += 1
+            self.buf.append((self.seq, time.time(), kind, text[:300]))
+
+    def since(self, after):
+        with self.lock:
+            return [dict(n=n, t=round(t, 2), k=k, s=x) for n, t, k, x in self.buf if n > after][-300:]
+
+
+CONSOLE = Console()
+
+
 # ------------------------------------------------------------------ pvt_lab link
 class PvtLink(threading.Thread):
     daemon = True
@@ -113,6 +137,10 @@ class PvtLink(threading.Thread):
             except ValueError:
                 return
             g = [f if 100 < f < 1500 else None for f in g]      # dead / garbled ring -> None
+            ok = [f for f in g if f]
+            if ok and self.grid_seq % 3 == 0:                   # every ~1 s is plenty for a log
+                CONSOLE.add("fpga", "%s %s %s ... %s  (64 rings, %.0f-%.0f MHz)" % (tok[0], tok[1], tok[2], tok[-1],
+                                                                                   min(ok), max(ok)))
             with self.lock:
                 self.grid, self.grid_t = g, time.time()
                 self.grid_seq += 1
@@ -122,11 +150,14 @@ class PvtLink(threading.Thread):
                 k, v = int(tok[1], 16), [int(x, 16) for x in tok[2:]]
             except ValueError:
                 return
+            if k in (0, 0x3FF) or k % 256 == 0:
+                CONSOLE.add("fpga", line.strip())
             with self.lock:
                 self.qbuf[k] = v
             return
         if len(tok) < 6 or tok[0] != "R":
             return
+        CONSOLE.add("fpga", line.strip())
         try:
             ros = [ro_mhz(int(x, 16)) for x in tok[1:6]]
         except ValueError:
@@ -162,6 +193,8 @@ class PvtLink(threading.Thread):
             self.d, self.t = d, time.time()
 
     def send(self, cmd):
+        if cmd != "K":
+            CONSOLE.add("tx", cmd)
         with self.wlock:
             if self.fd is None:
                 return False
@@ -337,6 +370,7 @@ class Jtag(threading.Thread):
                 try:
                     v = self.read()
                     self.val, self.t, self.err = v, time.time(), None
+                    CONSOLE.add("xadc", "XADC  %.2f C   VCCINT %.4f V   VCCAUX %.4f V" % (v["temp_c"], v["vccint_v"], v["vccaux_v"]))
                 except FileNotFoundError:
                     self.err = "openFPGALoader not installed"
                 except Exception as e:
@@ -350,7 +384,7 @@ class Jtag(threading.Thread):
 # ------------------------------------------------------------------ storage
 class Store:
     COLS = (["temp_c", "vccint_v", "vccaux_v"] + ["ro%d_mhz" % k for k in range(NRO)] +
-            ["ro_temp_c", "duty", "tdc_ps", "droop_avg", "trng_p1", "quiet"])
+            ["ro_temp_c", "duty", "tdc_ps", "droop_avg", "trng_p1", "quiet", "trng_hmin", "puf_hd32", "puf_hd64", "hold_c"])
 
     def __init__(self, path, keep_days):
         os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -382,14 +416,54 @@ class Store:
             self.db.commit()
 
     def grid_rows(self, since):
-        """Heater-off die-map frames with an XADC reading: (T, vint, cells)."""
+        """Die-map frames with an XADC reading, in time order: (t, T, duty, cells)."""
         with self.lock:
             try:
-                rows = self.db.execute("SELECT temp, vint, cells FROM g WHERE t >= ? AND duty = 0 AND temp IS NOT NULL "
-                                       "AND vint IS NOT NULL", (int(since),)).fetchall()
+                rows = self.db.execute("SELECT t, temp, duty, cells FROM g WHERE t >= ? AND temp IS NOT NULL "
+                                       "ORDER BY t", (int(since),)).fetchall()
             except sqlite3.OperationalError:
                 return []
-        return [(r[0], r[1], json.loads(r[2])) for r in rows]
+        return [(r[0], r[1], r[2] or 0, json.loads(r[3])) for r in rows]
+
+    def by_temp(self, since):
+        """Heater-off samples binned by XADC temperature: ring speeds, droop-monitor
+        edge position, carry-chain delay and PUF bit flips (speed margin vs T)."""
+        cols = ["ro%d_mhz" % k for k in range(NRO)] + ["droop_avg", "tdc_ps", "puf_hd32", "puf_hd64"]
+        with self.lock:
+            rows = self.db.execute("SELECT CAST(ROUND(temp_c) AS INTEGER) AS tbin, %s, COUNT(*) FROM s WHERE t >= ? "
+                                   "AND temp_c IS NOT NULL AND (duty = 0 OR duty IS NULL) GROUP BY tbin ORDER BY tbin"
+                                   % ", ".join("AVG(%s)" % c for c in cols), (int(since),)).fetchall()
+        return dict(cols=["t_c"] + cols + ["n"], rows=[[r[0]] + [None if v is None else round(v, 4) for v in r[1:-1]] + [r[-1]]
+                                                       for r in rows])
+
+    def trng_vs_temp(self, since):
+        """TRNG bias and min-entropy binned by XADC die temperature (1 C bins)."""
+        with self.lock:
+            rows = self.db.execute("SELECT CAST(ROUND(temp_c) AS INTEGER) AS tbin, AVG(trng_p1), AVG(trng_hmin), "
+                                   "MIN(trng_hmin), MAX(trng_hmin), COUNT(*) FROM s WHERE t >= ? AND temp_c IS NOT NULL "
+                                   "AND trng_hmin IS NOT NULL GROUP BY tbin ORDER BY tbin", (int(since),)).fetchall()
+        return [dict(t_c=r[0], p1=round(r[1], 5), hmin=round(r[2], 4), hmin_lo=round(r[3], 4),
+                     hmin_hi=round(r[4], 4), n=r[5]) for r in rows]
+
+    def fine_history(self, fine, hours):
+        """Up to 1 h at 1-5 s resolution from pvtd's in-memory buffer."""
+        t0 = time.time() - hours * 3600
+        step = max(1, int(hours * 3600 / 600))
+        cols = ["t"] + self.COLS
+        it, iv, idu, ir, ih = (cols.index("temp_c"), cols.index("vccint_v"), cols.index("duty"),
+                               cols.index("ro_temp_c"), cols.index("hold_c"))
+        bins = {}
+        for t, T, v, du, rt, hc in fine:
+            if t >= t0:
+                bins.setdefault(t // step * step, []).append((T, v, du, rt, hc))
+        rows = []
+        for b in sorted(bins):
+            row = [b] + [None] * len(self.COLS)
+            for idx, j in ((it, 0), (iv, 1), (idu, 2), (ir, 3), (ih, 4)):
+                vals = [x[j] for x in bins[b] if x[j] is not None]
+                row[idx] = round(sum(vals) / len(vals), 4) if vals else None
+            rows.append(row)
+        return dict(step_s=step, cols=cols, rows=rows)
 
     def history(self, hours, points=600):
         t0 = time.time() - hours * 3600
@@ -408,18 +482,82 @@ class Store:
                                    ",".join("ro%d_mhz" % k for k in range(NRO)), (int(since),)).fetchall()
 
 
-def solve3(A, b):
+def solve(A, b):
+    """Gauss-Jordan with partial pivoting for a small dense system."""
+    n = len(b)
     M = [row[:] + [bb] for row, bb in zip(A, b)]
-    for c in range(3):
-        p = max(range(c, 3), key=lambda r: abs(M[r][c]))
+    for c in range(n):
+        p = max(range(c, n), key=lambda r: abs(M[r][c]))
         M[c], M[p] = M[p], M[c]
         if abs(M[c][c]) < 1e-12:
             raise ValueError("singular")
-        for r in range(3):
+        for r in range(n):
             if r != c:
                 f = M[r][c] / M[c][c]
                 M[r] = [x - f * y for x, y in zip(M[r], M[c])]
-    return [M[i][3] / M[i][i] for i in range(3)]
+    return [M[i][n] / M[i][i] for i in range(n)]
+
+
+def solve3(A, b):
+    return solve(A, b)
+
+
+def lstsq(X, y):
+    k = len(X[0])
+    A = [[sum(x[i] * x[j] for x in X) for j in range(k)] for i in range(k)]
+    bb = [sum(x[i] * yy for x, yy in zip(X, y)) for i in range(k)]
+    return solve(A, bb)
+
+
+def fit_thermal(pts):
+    """pts: [(t, XADC T, duty)] at ~3 s spacing. Output-error fit of a two-pole
+    model, T = ambient + g1*lp(u, tau1) + g2*lp(u, tau2), with lp a first-order
+    low-pass of the heater duty (0..1). For each (tau1, tau2) on a log grid the
+    gains and ambient are linear least squares; the pair with the smallest
+    residual wins. Unlike an ARX fit this isn't biased by XADC noise.
+    Returns the full-heater rise, ambient, the time constants and the weights."""
+    pts = [p for p in pts if p[1] is not None]
+    if len(pts) < 600:
+        return None
+    t = [p[0] for p in pts]
+    T = [p[1] for p in pts]
+    u = [p[2] / 255.0 for p in pts]
+    if max(u) - min(u) < 0.3 or t[-1] - t[0] < 1800:
+        return None
+    warm = next((i for i, tt in enumerate(t) if tt - t[0] > 300), 0)   # filters settle first
+    def lp(tau):
+        y, out = u[0], []
+        for i in range(len(u)):
+            dt = t[i] - t[i - 1] if i else 3.0
+            a = math.exp(-max(dt, 0.1) / tau)
+            y = a * y + (1 - a) * (u[i] + u[i - 1] if i else 2 * u[i]) / 2
+            out.append(y)
+        return out
+    grid1 = [3 * (80 / 3) ** (k / 13) for k in range(14)]
+    grid2 = [60 * (1500 / 60) ** (k / 13) for k in range(14)]
+    cache = {tau: lp(tau) for tau in set(grid1 + grid2)}
+    best = None
+    yy = T[warm:]
+    for t1 in grid1:
+        f1 = cache[t1][warm:]
+        for t2 in grid2:
+            if t2 < 2.5 * t1:
+                continue
+            f2 = cache[t2][warm:]
+            X = [(1.0, a, b) for a, b in zip(f1, f2)]
+            try:
+                amb, g1, g2 = lstsq(X, yy)
+            except ValueError:
+                continue
+            sse = sum((y - (amb + g1 * a + g2 * b)) ** 2 for y, a, b in zip(yy, f1, f2))
+            if best is None or sse < best[0]:
+                best = (sse, t1, t2, amb, g1, g2)
+    if not best:
+        return None
+    sse, t1, t2, amb, g1, g2 = best
+    return dict(rise_full_c=round(g1 + g2, 2), ambient_c=round(amb, 2), tau_s=[round(t1, 1), round(t2, 1)],
+                weights=[round(g1, 2), round(g2, 2)], rms_c=round((sse / len(yy)) ** 0.5, 3),
+                n=len(yy), span_min=round((t[-1] - t[0]) / 60, 1), t=int(time.time()))
 
 
 def fit_calib(rows):
@@ -472,7 +610,24 @@ class Pvtd:
                 self.grid_cal = json.load(open(self.grid_cal_path))
             except ValueError:
                 pass
-        self.ir = None                     # last IR-drop snapshot
+        self.thermo_pts = collections.deque(maxlen=2400)   # (t, XADC T, duty) per XADC read, ~2 h
+        self.thermo_last_t, self.thermal = 0.0, None
+        self.puf_ref_path = os.path.join(os.path.dirname(args.db), "puf_ref.json")
+        self.puf_ref = None
+        if os.path.exists(self.puf_ref_path):
+            try:
+                self.puf_ref = json.load(open(self.puf_ref_path))
+            except ValueError:
+                pass
+        self.waterfall = collections.deque(maxlen=60)       # background spectra, 1/min
+        self.fine = collections.deque(maxlen=3600)          # 1 s samples for the short chart ranges
+        self.ir = None                     # last IR-drop snapshot (this bitstream's, kept across restarts)
+        try:
+            ir = json.load(open(os.path.join(os.path.dirname(args.db), "ir_map.json")))
+            if ir.get("epoch") == float(open(os.path.join(os.path.dirname(args.db), "calib_epoch")).read()):
+                self.ir = ir
+        except (OSError, ValueError):
+            pass
         self.scope = None                  # last scope capture
         self.busy = None                   # "scope" / "ir map" while a sequence owns the heater
         self.seq_last = 0.0
@@ -530,15 +685,19 @@ class Pvtd:
             out["grid"] = dict(mhz=[None if f is None else round(f, 4) for f in g],
                                ref=self.grid_ref and [None if f is None else round(f, 4) for f in self.grid_ref],
                                ref_age_s=int(time.time() - self.grid_ref_t) if self.grid_ref else None,
-                               temp=[None if v is None else round(v, 2) for v in (self.grid_temps(g, vint) or [])] or None,
-                               cal=self.grid_cal and dict(n=self.grid_cal["n"], t_range=self.grid_cal["t_range"]),
+                               temp=[None if v is None else round(v, 2) for v in (self.grid_temps(g, vint, (d or {}).get("duty", 0)) or [])] or None,
+                               cal=self.grid_cal and dict(n=self.grid_cal["n"], t_range=self.grid_cal["t_range"],
+                                                          good=self.grid_cal.get("good")),
                                ir=self.ir)
+        out["puf"] = self.puf(g) if g else None
+        out["thermal"] = self.thermal
         out["busy"] = self.busy
         out["scope_t"] = self.scope and self.scope["t"]
         return out
 
     # -------------------------------------------- control
     def note(self, who, what):
+        CONSOLE.add("event", "%s: %s" % (who, what))
         with self.lock:
             self.log.appendleft(dict(t=int(time.time()), who=who, what=what))
 
@@ -623,7 +782,7 @@ class Pvtd:
 
     def control(self, req, who):
         a = req.get("action")
-        if a in ("heater", "hold") and self.busy:
+        if a in ("heater", "hold") and self.busy in ("scope capture", "IR-drop map"):
             return 409, "busy: %s in progress" % self.busy
         if a in ("heater", "hold"):
             if self.lab.latest() is None or not self.lab.latest()["lab"]:
@@ -721,6 +880,94 @@ class Pvtd:
         return 200, "ok"
 
     # -------------------------------------------- loops
+    def epoch(self):
+        try:
+            return float(open(os.path.join(os.path.dirname(self.args.db), "calib_epoch")).read())
+        except (OSError, ValueError):
+            return 0.0
+
+    # -------------------------------------------- chip fingerprint (RO PUF)
+    @staticmethod
+    def puf_bits(mhz):
+        ok = sorted(f for f in mhz if f)
+        if len(ok) < 32:
+            return None, None
+        med = ok[len(ok) // 2]
+        return [1 if (f and f > med) else 0 for f in mhz], [((f - med) / med if f else 0.0) for f in mhz]
+
+    def puf(self, g):
+        """64-bit ID: ring faster than the die median = 1. The 32 rings furthest
+        from the median in the reference frame form the 'stable key'."""
+        bits, dev = self.puf_bits(g)
+        if bits is None:
+            return None
+        if (self.puf_ref is None or self.puf_ref.get("epoch") != self.epoch()) and self.grid_ref:
+            rb, rd = self.puf_bits(self.grid_ref)
+            if rb:
+                stable = sorted(range(GRID_N), key=lambda i: -abs(rd[i]))[:32]
+                self.puf_ref = dict(epoch=self.epoch(), t=int(time.time()), bits=rb, stable=sorted(stable),
+                                    margin_ppm=[round(rd[i] * 1e6) for i in range(GRID_N)])
+                tmp = self.puf_ref_path + ".tmp"
+                json.dump(self.puf_ref, open(tmp, "w"))
+                os.replace(tmp, self.puf_ref_path)
+        hexid = "%016X" % int("".join(map(str, bits)), 2)
+        out = dict(id=hexid, bits=bits, dev_ppm=[round(d * 1e6) for d in dev])
+        if self.puf_ref and self.puf_ref.get("epoch") == self.epoch():
+            rb, st = self.puf_ref["bits"], self.puf_ref["stable"]
+            out.update(ref_id="%016X" % int("".join(map(str, rb)), 2),
+                       hd64=sum(a != b for a, b in zip(bits, rb)),
+                       hd32=sum(bits[i] != rb[i] for i in st),
+                       key32="%08X" % int("".join(str(rb[i]) for i in st), 2), stable=st,
+                       flipped=[i for i in range(GRID_N) if bits[i] != rb[i]])
+        return out
+
+    # -------------------------------------------- background spectra (waterfall)
+    def capture(self, dec, timeout=30):
+        """Arm the scope and collect its 1024-line dump; returns samples (taps)."""
+        with self.lab.lock:
+            self.lab.qbuf = {}
+        self.lab.send("O%X" % dec)
+        t0 = time.time()
+        while len(self.lab.qbuf) < 1024 and time.time() - t0 < timeout:
+            time.sleep(0.2)
+        with self.lab.lock:
+            q = dict(self.lab.qbuf)
+        if len(q) < 1024:
+            raise RuntimeError("dump incomplete (%d/1024 lines)" % len(q))
+        return [v / 16.0 for k in range(1024) for v in q[k]]
+
+    @staticmethod
+    def spectrum(x):
+        n = len(x)
+        mean = sum(x) / n
+        win = [0.5 - 0.5 * math.cos(2 * math.pi * i / (n - 1)) for i in range(n)]
+        X = fft([complex((v - mean) * w, 0) for v, w in zip(x, win)])
+        return mean, (sum((v - mean) ** 2 for v in x) / n) ** 0.5, [4 * abs(X[k]) / n for k in range(n // 2)]
+
+    def waterfall_loop(self):
+        """One background spectrum a minute (6.25 MS/s, 0-3.1 MHz), heater untouched."""
+        dec, fs, nb = 2, 25e6 / 4, 160
+        edges = [10e3 * (3.1e6 / 10e3) ** (i / nb) for i in range(nb + 1)]
+        while True:
+            time.sleep(60 - time.time() % 60 + 7)
+            d = self.lab.latest()
+            if self.busy or not d or not d["lab"]:
+                continue
+            self.busy = "background spectrum"
+            try:
+                x = self.capture(dec)
+                mean, rms, amp = self.spectrum(x)
+                df = fs / len(x)
+                row = []
+                for lo, hi in zip(edges[:-1], edges[1:]):
+                    k0, k1 = int(lo / df), max(int(lo / df) + 1, int(hi / df))
+                    row.append(round(20 * math.log10(max(max(amp[k0:k1]), 1e-4)), 1))
+                self.waterfall.append(dict(t=int(time.time()), duty=d.get("duty", 0), rms=round(rms, 2), db=row))
+            except RuntimeError:
+                pass
+            finally:
+                self.busy = None
+
     # -------------------------------------------- die map (8x8 grid of rings)
     def grid_tick(self, duty):
         """1 Hz: keep a heater-off reference frame (EMA) for 'change since the heater went on'."""
@@ -741,38 +988,57 @@ class Pvtd:
                              for a, b in zip(self.grid_ref, g)]
         self.grid_ref_t = time.time()
 
-    def grid_temps(self, g, vint):
+    def grid_temps(self, g, vint, duty=0):
         if not self.grid_cal or not g:
             return None
+        if duty:
+            if not self.ir:
+                return None                       # heater-on frames need the IR correction
+            g = [None if (f is None or p is None) else f / (1 + p * 1e-6 * duty / 255.0)
+                 for f, p in zip(g, self.ir["ppm"])]
         out = []
         for f, c in zip(g, self.grid_cal["ring"]):
             out.append((f - c["a"] - c["c"] * ((vint or 1.0) - 1.0)) / c["b"] if f and c and c["b"] else None)
         return out
 
     def refit_grid(self, since):
-        """Per-ring tempco from heater-off frames vs the XADC (no IR drop in them)."""
+        """Per-ring f = a + b*T against the XADC. Only near-equilibrium frames are
+        used (XADC changing < 0.05 C/s over the neighbouring samples), because
+        rings near the heater banks lead or lag the die centre in transients.
+        Heater-on frames count too once an IR-drop map exists: each ring's
+        slowdown at full heater, scaled by the duty, is added back. Rings whose
+        fit is worse than 1.5 C rms are left out rather than shown wrong."""
         rows = self.store.grid_rows(since)
-        if len(rows) < 60 or max(r[0] for r in rows) - min(r[0] for r in rows) < 8:
+        ir = self.ir["ppm"] if self.ir else None
+        pts = []
+        for k in range(1, len(rows) - 1):
+            (t0, T0, _, _), (t1, T1, du, cells), (t2, T2, _, _) = rows[k - 1], rows[k], rows[k + 1]
+            if t2 - t0 <= 0 or t2 - t0 > 60 or abs(T2 - T0) / (t2 - t0) > 0.05:
+                continue
+            if du:
+                if not ir:
+                    continue
+                cells = [None if (f is None or ir[i] is None) else f / (1 + ir[i] * 1e-6 * du / 255.0)
+                         for i, f in enumerate(cells)]
+            pts.append((T1, cells))
+        if len(pts) < 40 or max(p[0] for p in pts) - min(p[0] for p in pts) < 8:
             return
-        cal = {"ring": [], "n": len(rows), "t_range": [min(r[0] for r in rows), max(r[0] for r in rows)],
-               "date": time.strftime("%Y-%m-%d %H:%M")}
+        cal = {"ring": [], "n": len(pts), "t_range": [min(p[0] for p in pts), max(p[0] for p in pts)],
+               "date": time.strftime("%Y-%m-%d %H:%M"), "ir_corrected": bool(ir)}
         for i in range(GRID_N):
-            rk = [(T, v, cells[i]) for T, v, cells in rows if cells[i] is not None]
-            if len(rk) < 60:
+            rk = [(T, cells[i]) for T, cells in pts if cells[i] is not None]
+            if len(rk) < 40:
                 cal["ring"].append(None)
                 continue
-            X = [(1.0, T, v - 1.0) for T, v, _ in rk]
-            y = [f for _, _, f in rk]
-            A = [[sum(x[a] * x[b] for x in X) for b in range(3)] for a in range(3)]
-            bb = [sum(x[a] * yy for x, yy in zip(X, y)) for a in range(3)]
             try:
-                a, b, c = solve3(A, bb)
+                a, b = lstsq([(1.0, T) for T, _ in rk], [f for _, f in rk])
             except ValueError:
                 cal["ring"].append(None)
                 continue
-            res = [yy - (a + b * x[1] + c * x[2]) for x, yy in zip(X, y)]
-            rms = (sum(e * e for e in res) / len(res)) ** 0.5
-            cal["ring"].append(dict(a=a, b=b, c=c, rms_c=abs(rms / b) if b else 99.0) if b else None)
+            rms = (sum((f - a - b * T) ** 2 for T, f in rk) / len(rk)) ** 0.5
+            rms_c = abs(rms / b) if b else 99.0
+            cal["ring"].append(dict(a=a, b=b, c=0.0, rms_c=round(rms_c, 2)) if b and rms_c < 1.5 else None)
+        cal["good"] = sum(1 for r in cal["ring"] if r)
         tmp = self.grid_cal_path + ".tmp"
         json.dump(cal, open(tmp, "w"))
         os.replace(tmp, self.grid_cal_path)
@@ -815,7 +1081,11 @@ class Pvtd:
             self.next_frame(); off2 = self.next_frame()
             ppm = [None if (a is None or b is None or c is None) else (b - (a + c) / 2) / ((a + c) / 2) * 1e6
                    for a, b, c in zip(off1, on, off2)]
-            self.ir = dict(t=int(time.time()), ppm=[None if v is None else round(v, 1) for v in ppm])
+            self.ir = dict(t=int(time.time()), ppm=[None if v is None else round(v, 1) for v in ppm], epoch=self.epoch())
+            try:
+                json.dump(self.ir, open(os.path.join(os.path.dirname(self.args.db), "ir_map.json"), "w"))
+            except OSError:
+                pass
             good = [v for v in ppm if v is not None]
             self.note(who, "IR-drop map: %.0f to %.0f ppm" % (min(good), max(good)) if good else "IR-drop map")
         except RuntimeError as e:
@@ -832,27 +1102,16 @@ class Pvtd:
             if load:
                 self.lab.send("HFF")
                 time.sleep(0.6)
-            with self.lab.lock:
-                self.lab.qbuf = {}
-            self.lab.send("O%X" % dec)
-            t0 = time.time()
-            while not self.lab.qbuf and time.time() - t0 < 5:   # first Q line = capture finished
-                time.sleep(0.01)
-            if load:
-                self.lab.send("H00")
-            while len(self.lab.qbuf) < 1024 and time.time() - t0 < 30:
-                time.sleep(0.2)
-            with self.lab.lock:
-                q = dict(self.lab.qbuf)
-            if len(q) < 1024:
-                raise RuntimeError("dump incomplete (%d/1024 lines)" % len(q))
-            x = [v / 16.0 for k in range(1024) for v in q[k]]
+            if load:                                    # heater off again once the capture is in RAM
+                def off_after_first_line():
+                    t0 = time.time()
+                    while not self.lab.qbuf and time.time() - t0 < 5:
+                        time.sleep(0.01)
+                    self.lab.send("H00")
+                threading.Timer(0.05, off_after_first_line).start()
+            x = self.capture(dec)
             n, fs = len(x), 25e6 / (1 << dec)
-            mean = sum(x) / n
-            rms = (sum((v - mean) ** 2 for v in x) / n) ** 0.5
-            win = [0.5 - 0.5 * math.cos(2 * math.pi * i / (n - 1)) for i in range(n)]
-            X = fft([complex((v - mean) * w, 0) for v, w in zip(x, win)])
-            amp = [4 * abs(X[k]) / n for k in range(n // 2)]       # Hann-corrected amplitude, taps
+            mean, rms, amp = self.spectrum(x)
             peaks = [k for k in range(3, n // 2 - 1) if amp[k] > amp[k - 1] and amp[k] >= amp[k + 1]]
             peaks = sorted(peaks, key=lambda k: -amp[k])[:5]
             G = 8                                                    # 8192 bins -> 1024 (max-hold)
@@ -868,6 +1127,111 @@ class Pvtd:
         finally:
             self.lab.send("W%d" % self.ctl["quiet"])
             self.busy, self.seq_last = None, time.time()
+
+    # -------------------------------------------- web console (command language)
+    HELP = [
+        "status                 everything at a glance",
+        "heater <0-100>         open-loop heater power in %  (heater off = off)",
+        "hold <30-65>           hold the die at a temperature (XADC loop on the Pi)",
+        "off                    heater off",
+        "quiet on|off           heater pauses 1 gate in 4 so the rings read clean",
+        "droop [0-63]           show / set the droop-monitor tap",
+        "clear                  clear droop, glitch and over-temp alarms",
+        "scope [0-8] [full]     capture supply noise at 25 MS/s / 2^n, heater off or full",
+        "ir                     measure the IR-drop map (heater pulse, ~3 s)",
+        "trng on|off|clear      run, stop or clear the TRNG",
+        "trng rate <0-9>        TRNG samples every 2^n clocks",
+        "roll                   32 bytes from the TRNG (SHA-256 conditioned)",
+        "id                     this chip's ring-oscillator fingerprint",
+        "thermal                fitted thermal model",
+        "help                   this list",
+    ]
+
+    def console_cmd(self, text, who):
+        """Parse one console line into a validated action. Returns (code, [output lines])."""
+        w = text.strip().lower().split()
+        if not w:
+            return 200, []
+        c, a = w[0], w[1:]
+        num = lambda v: float(v.rstrip("%c")) if re.fullmatch(r"-?\d+(\.\d+)?[%c]?", v) else None
+        def act(req):
+            code, msg = self.control(req, who)
+            return code, [msg]
+        if c in ("help", "?"):
+            return 200, self.HELP
+        if c == "status":
+            n = self.now()
+            lab, tr, ct = n.get("lab") or {}, n.get("trng") or {}, n["control"]
+            out = ["die %s C (%s)   VCCINT %s V   VCCAUX %s V" % (
+                       "%.2f" % n["temp_c"] if n["temp_c"] is not None else "--", n["temp_source"] or "no sensor",
+                       "%.4f" % n["vccint_v"] if n["vccint_v"] else "--", "%.4f" % n["vccaux_v"] if n["vccaux_v"] else "--"),
+                   "heater %d%%  mode %s%s   quiet window %s" % (round(lab.get("duty", 0) / 2.55), ct["mode"],
+                       " %.1f C" % ct["hold_c"] if ct.get("hold_c") else "", "on" if ct["quiet"] else "off"),
+                   "rings  " + "  ".join("ro%d %s" % (k, "%.2f" % f if f else "dead") for k, f in enumerate(n["ro_mhz"] or [])) + "  MHz",
+                   "droop  tap %s  edge %s/%s/%s   alarms %s" % (ct.get("droop_tap"), lab.get("droop_min"), 
+                       "%.0f" % lab["droop_avg"] if lab.get("droop_avg") is not None else "--", lab.get("droop_max"),
+                       ", ".join(lab.get("alarms") or []) or "none"),
+                   "TDC    %s" % ("%.2f ps/tap" % lab["tdc_ps"] if lab.get("tdc_ps") else "--"),
+                   "TRNG   %s" % ("%.0f kbit/s  P(1) %.4f  H_min %.3f" % (tr["bitrate"] / 1e3, tr["p1"], tr["min_entropy"])
+                                  if tr.get("min_entropy") else ("stopped" if not tr.get("live") else "--"))]
+            if n.get("busy"):
+                out.append("busy   " + n["busy"])
+            return 200, out
+        if c == "heater":
+            if a and a[0] == "off":
+                return act(dict(action="off"))
+            v = num(a[0]) if a else None
+            if v is None or not 0 <= v <= 100:
+                return 400, ["usage: heater <0-100>   (percent)"]
+            return act(dict(action="heater", duty=int(round(v * 2.55))))
+        if c == "off":
+            return act(dict(action="off"))
+        if c == "hold":
+            v = num(a[0]) if a else None
+            if v is None:
+                return 400, ["usage: hold <30-65>   (degrees C)"]
+            return act(dict(action="hold", temp_c=v))
+        if c == "quiet" and a and a[0] in ("on", "off"):
+            return act(dict(action="quiet", on=a[0] == "on"))
+        if c == "droop":
+            if not a:
+                return 200, ["droop-monitor tap %s" % self.ctl.get("droop_tap")]
+            v = num(a[0])
+            if v is None or v != int(v):
+                return 400, ["usage: droop <0-63>"]
+            return act(dict(action="droop", tap=int(v)))
+        if c == "clear":
+            return act(dict(action="clear"))
+        if c == "scope":
+            dec = next((int(x) for x in a if x.isdigit()), 0)
+            return act(dict(action="scope", dec=dec, load="full" in a))
+        if c == "ir":
+            return act(dict(action="ir_map"))
+        if c == "trng":
+            if a and a[0] in ("on", "off"):
+                return act(dict(action="trng", run=a[0] == "on"))
+            if a and a[0] == "clear":
+                return act(dict(action="trng_clear"))
+            if len(a) == 2 and a[0] == "rate" and a[1].isdigit():
+                return act(dict(action="trng_rate", div=int(a[1])))
+            return 400, ["usage: trng on|off|clear   or   trng rate <0-9>"]
+        if c == "roll":
+            r = self.trng.random(32) if self.trng else None
+            return (200, [r.hex()]) if r else (409, ["TRNG not streaming"])
+        if c == "id":
+            g = self.lab.grid if time.time() - self.lab.grid_t < 3 else None
+            pf = self.puf(g) if g else None
+            if not pf:
+                return 409, ["no die-map frames"]
+            return 200, ["chip ID     %s" % pf["id"]] + (["stable key  %s   (%d/32 stable bits, %d/64 bits differ from the reference)"
+                                                          % (pf["key32"], 32 - pf["hd32"], pf["hd64"])] if "key32" in pf else [])
+        if c == "thermal":
+            t = self.thermal
+            if not t:
+                return 200, ["no thermal model yet (needs 30 min of history with heater steps)"]
+            return 200, ["full heater +%.1f C over %.1f C ambient; tau %.0f s (%.1f C) and %.0f s (%.1f C); fit rms %.2f C"
+                         % (t["rise_full_c"], t["ambient_c"], t["tau_s"][0], t["weights"][0], t["tau_s"][1], t["weights"][1], t["rms_c"])]
+        return 400, ["unknown command: %s   (try help)" % c[:20]]
 
     def tune_droop(self):
         """Binary-search the droop-monitor tap that puts the edge nearest mid-range
@@ -953,9 +1317,29 @@ class Pvtd:
                 self.cooldown = False
             # self-calibration against the XADC, every 10 min
             self.grid_tick(d.get("duty") if d else 0)
+            xv = self.jtag.latest() if self.jtag else None
+            rts = self.ro_temps(d, xv and xv["vccint_v"]) if d else None
+            k = self.best_ro()
+            self.fine.append((int(time.time()), xv and xv["temp_c"], xv and xv["vccint_v"],
+                              d.get("duty") if d else None, rts[k] if rts and k is not None else None,
+                              self.ctl["hold_c"] if self.ctl["mode"] == "hold" else None))
+            if self.trng and int(time.time()) % 5 == 0:
+                st = self.trng.stats()
+                if st.get("min_entropy"):
+                    CONSOLE.add("trng", "TRNG  %.0f kbit/s   P(1) %.4f   H_min %.3f   longest run %d" %
+                                (st["bitrate"] / 1e3, st["p1"], st["min_entropy"], st["longest_run"]))
+            if self.jtag and self.jtag.val and self.jtag.t != self.thermo_last_t and d and d["lab"]:
+                self.thermo_last_t = self.jtag.t
+                self.thermo_pts.append((self.jtag.t, self.jtag.val["temp_c"], d.get("duty", 0)))
+                if len(self.thermo_pts) % 100 == 0:          # ~every 5 min, off the keepalive thread
+                    def do_fit(pts=list(self.thermo_pts)):
+                        fit = fit_thermal(pts)
+                        if fit:
+                            self.thermal = fit
+                    threading.Thread(target=do_fit, daemon=True).start()
             if self.jtag and time.time() - last_fit > 600:
                 last_fit = time.time()
-                self.refit()
+                threading.Thread(target=self.refit, daemon=True).start()   # never block keepalives
             # FPGA lost its design (power cycle): reload the playground bitstream
             if (self.jtag and self.args.bitstream and os.path.exists(self.args.bitstream)
                     and time.time() - self.last_lab > 90 and time.time() - self.jtag.last_load > 900):
@@ -1003,7 +1387,10 @@ class Pvtd:
             lab = n["lab"] or {}
             # quiet: the RO counts are heater-off samples (clean for the RO calibration)
             row.update(duty=lab.get("duty"), tdc_ps=lab.get("tdc_ps"), droop_avg=lab.get("droop_avg"),
-                       trng_p1=(n.get("trng") or {}).get("p1"), quiet=1 if n["control"]["quiet"] else 0)
+                       trng_p1=(n.get("trng") or {}).get("p1"), quiet=1 if n["control"]["quiet"] else 0,
+                       trng_hmin=(n.get("trng") or {}).get("min_entropy"),
+                       puf_hd32=(n.get("puf") or {}).get("hd32"), puf_hd64=(n.get("puf") or {}).get("hd64"),
+                       hold_c=n["control"].get("hold_c") if n["control"]["mode"] == "hold" else None)
             self.store.add(n["time"], row)
             g = self.lab.grid if time.time() - self.lab.grid_t < 3 else None
             if g and not self.busy:
@@ -1017,6 +1404,8 @@ class Pvtd:
             self.jtag.start()
         threading.Thread(target=self.sampler, daemon=True).start()
         threading.Thread(target=self.supervisor, daemon=True).start()
+        if self.args.waterfall:
+            threading.Thread(target=self.waterfall_loop, daemon=True).start()
         srv = ThreadingHTTPServer((self.args.bind, self.args.http), make_handler(self))
         srv.daemon_threads = True
         print("pvtd on %s:%d" % (self.args.bind, self.args.http), flush=True)
@@ -1075,12 +1464,31 @@ def make_handler(p):
                     h = float(parse_qs(u.query).get("h", ["24"])[0])
                 except ValueError:
                     h = 24
-                return self._json(200, p.store.history(min(max(h, 0.1), 720)))
+                h = min(max(h, 1 / 60), 720)
+                if h <= 1 and p.fine:
+                    return self._json(200, p.store.fine_history(list(p.fine), h))
+                return self._json(200, p.store.history(h))
             if u.path == "/api/trng/random":
                 if not p.trng or not p.rate_ok(self.ip()):
                     return self._json(429 if p.trng else 409, dict(error="unavailable"))
                 r = p.trng.random(32)
                 return self._json(200 if r else 409, dict(hex=r.hex()) if r else dict(error="TRNG not streaming"))
+            if u.path == "/api/trng/vstemp":
+                try:
+                    since = float(open(os.path.join(os.path.dirname(p.args.db), "calib_epoch")).read())
+                except (OSError, ValueError):
+                    since = 0
+                return self._json(200, dict(since=int(since), bins=p.store.trng_vs_temp(since)))
+            if u.path == "/api/console":
+                try:
+                    after = int(parse_qs(u.query).get("after", ["0"])[0])
+                except ValueError:
+                    after = 0
+                return self._json(200, dict(seq=CONSOLE.seq, lines=CONSOLE.since(after)))
+            if u.path == "/api/bytemp":
+                return self._json(200, p.store.by_temp(p.epoch()))
+            if u.path == "/api/waterfall":
+                return self._json(200, dict(f_lo=10e3, f_hi=3.1e6, bins=160, rows=list(p.waterfall)))
             if u.path == "/api/scope":
                 return self._json(200 if p.scope else 404, p.scope or dict(error="no capture yet"))
             if u.path == "/healthz":
@@ -1090,7 +1498,8 @@ def make_handler(p):
         do_HEAD = do_GET
 
         def do_POST(self):
-            if urlparse(self.path).path != "/api/control":
+            path = urlparse(self.path).path
+            if path not in ("/api/control", "/api/console"):
                 return self._send(405, "no\n", "text/plain")
             n = int(self.headers.get("Content-Length") or 0)
             if n <= 0 or n > 1024 or "json" not in (self.headers.get("Content-Type") or ""):
@@ -1103,6 +1512,15 @@ def make_handler(p):
                     raise ValueError
             except ValueError:
                 return self._json(400, dict(error="bad json"))
+            if path == "/api/console":
+                cmd = req.get("cmd")
+                if not isinstance(cmd, str) or len(cmd) > 80:
+                    return self._json(400, dict(error="bad command"))
+                CONSOLE.add("cmd", "%s> %s" % (self.who(), re.sub(r"[^\x20-\x7e]", "", cmd)))
+                code, out = p.console_cmd(cmd, self.who())
+                for line in out:
+                    CONSOLE.add("out", line)
+                return self._json(code, dict(ok=code in (200, 202), out=out))
             code, msg = p.control(req, self.who())
             self._json(code, dict(ok=code in (200, 202), message=msg))
 
@@ -1134,6 +1552,8 @@ def main():
     ap.add_argument("--calib", default="/etc/pvtd/calib.json")
     ap.add_argument("--droop-tap", type=lambda v: int(v, 0), default=None,
                     help="fixed droop-monitor delay tap; default: found automatically (edge mid-range)")
+    ap.add_argument("--no-waterfall", dest="waterfall", action="store_false",
+                    help="skip the background spectrum every minute")
     ap.add_argument("--seq-gap", type=int, default=15, help="s between scope / IR-map captures (all visitors)")
     ap.add_argument("--tmax", type=float, default=72.0, help="heater cut-off, C")
     ap.add_argument("--max-hold", type=int, default=65, help="highest hold setpoint, C")

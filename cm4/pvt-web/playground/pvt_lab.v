@@ -74,16 +74,16 @@ module pvt_lab #(
     // ---------------------------------------------------------------- ROs
     localparam NRO = 5;
     wire [24*NRO-1:0] ro_cnt;
-    ro_monitor #(.LOC("SLICE_X0Y20"))    ro0 (.clk(clk), .en(!rst), .count(ro_cnt[ 0+:24]));
-    ro_monitor #(.LOC("SLICE_X151Y20"))  ro1 (.clk(clk), .en(!rst), .count(ro_cnt[24+:24]));
-    ro_monitor #(.LOC("SLICE_X80Y170"))  ro2 (.clk(clk), .en(!rst), .count(ro_cnt[48+:24]));
-    ro_monitor #(.LOC("SLICE_X0Y320"))   ro3 (.clk(clk), .en(!rst), .count(ro_cnt[72+:24]));
-    ro_monitor #(.LOC("SLICE_X145Y320")) ro4 (.clk(clk), .en(!rst), .count(ro_cnt[96+:24]));
+    ro_monitor #(.LOC("SLICE_X0Y20"),    .DLOC("SLICE_X1Y20"))    ro0 (.clk(clk), .en(!rst), .count(ro_cnt[ 0+:24]));
+    ro_monitor #(.LOC("SLICE_X151Y20"),  .DLOC("SLICE_X150Y20"))  ro1 (.clk(clk), .en(!rst), .count(ro_cnt[24+:24]));
+    ro_monitor #(.LOC("SLICE_X80Y170"),  .DLOC("SLICE_X81Y170"))  ro2 (.clk(clk), .en(!rst), .count(ro_cnt[48+:24]));
+    ro_monitor #(.LOC("SLICE_X0Y320"),   .DLOC("SLICE_X1Y320"))   ro3 (.clk(clk), .en(!rst), .count(ro_cnt[72+:24]));
+    ro_monitor #(.LOC("SLICE_X145Y320"), .DLOC("SLICE_X144Y320")) ro4 (.clk(clk), .en(!rst), .count(ro_cnt[96+:24]));
 
     // TDC: its own source RO just below the carry chain
     wire [23:0] tdc_ro_cnt, tdc_sum;
     wire        tdc_sig;
-    ro_monitor #(.LOC("SLICE_X82Y98")) ro_tdc (.clk(clk), .en(!rst), .count(tdc_ro_cnt), .ring(tdc_sig));
+    ro_monitor #(.LOC("SLICE_X82Y98"), .DLOC("SLICE_X83Y98")) ro_tdc (.clk(clk), .en(!rst), .count(tdc_ro_cnt), .ring(tdc_sig));
     tdc #(.LOC("SLICE_X82Y100"), .NC(64), .AVG(12)) tdc_i (.clk(clk), .sig(tdc_sig), .sum(tdc_sum), .upd());
 
     // All ro_monitor gates run off the same free-running 20-bit counter phase

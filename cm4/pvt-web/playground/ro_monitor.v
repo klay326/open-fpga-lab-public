@@ -7,7 +7,9 @@
 // 50 MHz side samples it through a 2-FF synchroniser and differences it every
 // 2^20 clocks.
 module ro_monitor #(
-    parameter LOC = "SLICE_X0Y0"
+    parameter LOC  = "SLICE_X0Y0",
+    parameter DLOC = ""          // playground: slice for the first /2 stage, the
+                                 // other slice of LOC's CLB tile ("" = unpinned)
 ) (
     input  wire        clk,
     input  wire        en,
@@ -29,9 +31,21 @@ module ro_monitor #(
     // clock to the counter swallowed edges in some builds (ro1 read 492, ~300,
     // 0, 490, 0 MHz across builds). count is doubled below so the line format
     // and f = 2*count*50e6/2^20 stay the same (1 LSB of ~2.5M lost).
-    (* clkbuf_inhibit *) reg half = 1'b0;
+    // The first stage (clocked by the 500-600 MHz ring itself) is pinned into
+    // the paired slice of the ring's CLB tile when DLOC is set: it can't share
+    // the ring's slice (one clock per slice, and the ring's LUTs are taken),
+    // but the paired slice is the shortest route the fabric has.
+    (* clkbuf_inhibit *) wire half;
     (* clkbuf_inhibit *) reg quarter = 1'b0;
-    always @(posedge n3) half <= ~half;
+    generate if (DLOC != "") begin : pin
+        wire half_n;
+        (* keep, BEL = {DLOC, "/A6LUT"} *) LUT1 #(.INIT(2'b01)) inv (.O(half_n), .I0(half));
+        (* keep, BEL = {DLOC, "/AFF"} *) FDRE #(.INIT(1'b0)) ff (.C(n3), .CE(1'b1), .R(1'b0), .D(half_n), .Q(half));
+    end else begin : free
+        reg h = 1'b0;
+        always @(posedge n3) h <= ~h;
+        assign half = h;
+    end endgenerate
     always @(posedge half) quarter <= ~quarter;
     reg [23:0] bin = 24'd0, gray = 24'd0;
     always @(posedge quarter) begin

@@ -34,7 +34,7 @@ input[type=number]{width:76px;font:inherit;padding:5px 8px;border-radius:8px;bor
 .tg span{position:absolute;inset:0;background:var(--line);border-radius:12px;cursor:pointer;transition:.15s}
 .tg span:before{content:"";position:absolute;width:18px;height:18px;left:3px;top:3px;background:#fff;border-radius:50%;transition:.15s}
 .tg input:checked+span{background:var(--acc)}.tg input:checked+span:before{transform:translateX(20px)}
-.seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden}
 .seg button{border:0;border-radius:0;background:none;color:var(--mut);padding:4px 11px;font-size:13px}.seg button.on{background:var(--fg);color:var(--bg)}
 canvas{width:100%;display:block}
 #msg{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);background:var(--fg);color:var(--bg);padding:9px 16px;border-radius:10px;font-size:14px;opacity:0;transition:.2s;pointer-events:none;max-width:90vw}
@@ -64,10 +64,21 @@ footer{margin-top:26px;font-size:12px;color:var(--mut)}
  <div class="card"><div class="lbl">Heater</div><div class="val" id="duty">--</div><div class="note" id="hmode">&nbsp;</div></div>
 </div>
 
+<div class="section"><div class="head"><div><h2>Console</h2><span class="note">What the FPGA is saying, live, plus a prompt. Type <span class="mono">help</span>. Everyone sees the same console.</span></div>
+  <div class="pills"><label class="pill"><input type="checkbox" id="cf-fpga" checked> FPGA</label><label class="pill"><input type="checkbox" id="cf-xadc" checked> XADC</label><label class="pill"><input type="checkbox" id="cf-trng" checked> TRNG</label></div></div>
+ <div class="card" style="padding:0;overflow:hidden;background:#0d0f0c;border-color:#2a2d27">
+  <div id="con" class="mono" style="height:260px;overflow:auto;padding:10px 12px;font-size:12px;line-height:1.45;color:#b8c2b0;white-space:pre-wrap"></div>
+  <div style="display:flex;align-items:center;gap:8px;border-top:1px solid #2a2d27;padding:8px 12px">
+   <span class="mono" style="color:#7fd17f">fpga&gt;</span>
+   <input id="cin" class="mono" autocomplete="off" spellcheck="false" maxlength="80" placeholder="help" style="flex:1;background:transparent;border:0;outline:0;color:#e8efe2;font-size:13px">
+  </div>
+ </div>
+</div>
+
 <div class="section"><div class="head"><div><h2>Thermal lab</h2><span class="note">About 200,000 flip-flops toggling every clock make the heater. Hold runs on the Pi against the XADC, or inside the FPGA on a ring oscillator when the XADC is offline.</span></div></div>
  <div class="grid g32">
   <div class="card">
-   <div class="row" style="margin-top:0"><span class="lbl">Temperature &amp; heater</span><div class="seg" id="seg"><button data-h="0.25">15 m</button><button data-h="1" class="on">1 h</button><button data-h="24">24 h</button><button data-h="168">7 d</button></div></div>
+   <div class="row" style="margin-top:0"><span class="lbl">Temperature &amp; heater <span style="text-transform:none;letter-spacing:0">· dashed = hold target</span></span><div class="seg" id="seg"><button data-h="0.083333">5 m</button><button data-h="1" class="on">1 h</button><button data-h="24">24 h</button><button data-h="168">7 d</button></div></div>
    <canvas id="ch" style="height:240px"></canvas><div class="note" id="tip">&nbsp;</div>
   </div>
   <div class="card">
@@ -132,6 +143,9 @@ footer{margin-top:26px;font-size:12px;color:var(--mut)}
    <div class="lbl">Time</div><canvas id="sct" style="height:150px"></canvas>
    <div class="lbl" style="margin-top:10px">Spectrum</div><canvas id="scf" style="height:190px"></canvas>
    <div class="note" id="scnote">&nbsp;</div>
+   <div class="lbl" style="margin-top:12px">Last hour: one background spectrum a minute (6.25 MS/s), newest at the top</div>
+   <canvas id="wf" style="height:200px;image-rendering:pixelated"></canvas>
+   <div class="note" id="wfnote">&nbsp;</div>
   </div>
   <div class="card">
    <div class="row" style="margin-top:0"><span>Sample rate</span><select id="scdec" style="font:inherit;padding:4px 8px;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--fg)">
@@ -170,6 +184,47 @@ footer{margin-top:26px;font-size:12px;color:var(--mut)}
    <div class="mono note" id="rhex">SHA-256 of the raw stream</div>
   </div>
  </div>
+</div>
+
+<div class="section"><div class="head"><div><h2>Chip fingerprint</h2><span class="note">The die map's process variation is unique to this piece of silicon. Each ring gives one bit (faster or slower than the die median): a 64-bit ID. The 32 rings furthest from the median form a steadier key. It's a ring-oscillator PUF, the same idea used to give chips an unclonable identity. Here it's stable for a given bitstream but changes with each rebuild, because routing near each ring shifts its frequency slightly.</span></div></div>
+ <div class="grid g2">
+  <div class="card">
+   <div class="lbl">This chip</div>
+   <div class="mono" style="font-size:22px;margin:4px 0" id="pufid">--</div>
+   <div class="row"><span>Stable key (32 bits)</span><b class="mono" id="pufkey">--</b></div>
+   <div class="row"><span>Bits changed vs reference</span><b id="pufhd">--</b></div>
+   <canvas id="pufmap" style="height:200px"></canvas>
+   <div class="note" id="pufnote">&nbsp;</div>
+  </div>
+  <div class="card">
+   <div class="lbl">Bit flips vs die temperature</div>
+   <canvas id="pufvt" style="height:220px"></canvas>
+   <p class="note" style="margin:8px 0 0">Heat the die and some bits near the median flip, because the rings' temperature responses differ slightly. Those flips are why real PUFs pick stable bits and use error correction.</p>
+  </div>
+ </div>
+</div>
+
+<div class="section"><div class="head"><div><h2>Thermal model</h2><span class="note">Fitted continuously from the XADC and heater history: how hot full power gets the die, and how fast. There are two time constants, the die itself and the package plus board.</span></div></div>
+ <div class="grid g2">
+  <div class="card">
+   <table><tbody id="thtab"><tr><td class="note">Needs 30 min of history with some heater use. Turn the heater on and off a few times.</td></tr></tbody></table>
+   <p class="note" style="margin:10px 0 0">The board can't measure the heater's current, so this is °C per full heater rather than °C per watt.</p>
+  </div>
+  <div class="card"><div class="lbl">Model: full heater from ambient</div><canvas id="thstep" style="height:200px"></canvas></div>
+ </div>
+</div>
+
+<div class="section"><div class="head"><div><h2>Speed vs temperature</h2><span class="note">How the silicon's speed changes as it warms, on heater-off samples only (no IR drop). Three views of the same physics: free-running rings, the droop monitor's edge position within one clock period, and the carry-chain delay per tap.</span></div></div>
+ <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(260px,1fr))">
+  <div class="card"><div class="lbl">Ring speed shift (ppm vs the coolest bin)</div><canvas id="mg1" style="height:170px"></canvas></div>
+  <div class="card"><div class="lbl">Droop-monitor edge position (taps)</div><canvas id="mg2" style="height:170px"></canvas></div>
+  <div class="card"><div class="lbl">Carry-chain delay (ps per tap)</div><canvas id="mg3" style="height:170px"></canvas></div>
+ </div>
+ <p class="note" id="mgnote" style="margin:8px 0 0"></p>
+</div>
+
+<div class="section"><div class="head"><div><h2>Entropy vs temperature</h2><span class="note">Every 10 s the Pi logs the TRNG's min-entropy and bias next to the XADC die temperature. Heat the die and watch whether the jitter, and so the randomness, changes.</span></div></div>
+ <div class="card"><canvas id="evt" style="height:220px"></canvas><div class="note" id="evtnote">&nbsp;</div></div>
 </div>
 
 <div class="section grid g2">
@@ -229,7 +284,7 @@ async function now(){
  setIf($('trun'),'checked',t.running!==false);if(t.div!=null){setIf($('divr'),'value',t.div);$('divv').textContent=`${2**(+$('divr').value)} clocks`}
  $('tnote').textContent=t.note||(t.live?`${(t.total_bytes/1e6).toFixed(1)} MB since start`:'');
  if(t.bitmap)drawNoise(t.bitmap);
- drawMap(n);$('scbusy').textContent=n.busy||'';$('b-scope').disabled=$('b-ir').disabled=!!n.busy||!n.sources.lab;
+ drawMap(n);drawPuf(n);drawThermal(n);$('scbusy').textContent=n.busy||'';$('b-scope').disabled=$('b-ir').disabled=!!n.busy||!n.sources.lab;
  $('irnote').textContent=n.busy==='IR-drop map'?'measuring…':'';
  if(n.scope_t&&n.scope_t!==lastScope){lastScope=n.scope_t;loadScope()}
  // log
@@ -255,24 +310,26 @@ async function history(){try{hist=await (await fetch('/api/history?h='+hours,{ca
 let pts=[];
 function draw(){
  const c=$('ch'),r=devicePixelRatio||1,W=c.clientWidth,H=c.clientHeight;c.width=W*r;c.height=H*r;const g=c.getContext('2d');g.scale(r,r);pts=[];
- if(!hist)return;const ix=n=>hist.cols.indexOf(n);const it=ix('temp_c'),ir=ix('ro_temp_c'),id=ix('duty'),iv=ix('vccint_v');
- const rows=hist.rows.map(x=>({t:x[0],T:x[it]!=null?x[it]:x[ir],d:x[id],v:x[iv]})).filter(x=>x.T!=null||x.d!=null);
+ if(!hist)return;const ix=n=>hist.cols.indexOf(n);const it=ix('temp_c'),ir=ix('ro_temp_c'),id=ix('duty'),iv=ix('vccint_v'),ih=ix('hold_c');
+ const rows=hist.rows.map(x=>({t:x[0],T:x[it]!=null?x[it]:x[ir],d:x[id],v:x[iv],h:ih>=0?x[ih]:null})).filter(x=>x.T!=null||x.d!=null);
  g.font='11px system-ui';g.fillStyle=css('--mut');
  if(!rows.length){g.fillText('No history in this range yet',8,20);return}
- const t1=Date.now()/1000,t0=t1-hours*3600,Ts=rows.map(x=>x.T).filter(v=>v!=null);
+ const t1=Date.now()/1000,t0=t1-hours*3600,Ts=rows.flatMap(x=>[x.T,x.h]).filter(v=>v!=null);
  let lo=Math.min(...Ts,40),hi=Math.max(...Ts,45);const pad=Math.max(1,(hi-lo)*.12);lo=Math.floor(lo-pad);hi=Math.ceil(hi+pad);
  const L=36,R=8,T=8,B=22,X=t=>L+(t-t0)/(t1-t0)*(W-L-R),Y=v=>T+(hi-v)/(hi-lo)*(H-T-B);
  g.strokeStyle=css('--line');const st=Math.max(1,Math.ceil((hi-lo)/5));
  for(let v=Math.ceil(lo/st)*st;v<=hi;v+=st){const y=Math.round(Y(v))+.5;g.beginPath();g.moveTo(L,y);g.lineTo(W-R,y);g.stroke();g.fillText(v+'°',4,y+4)}
- const nt=W<520?3:6;for(let i=0;i<=nt;i++){const t=t0+(t1-t0)*i/nt,dd=new Date(t*1000);const s=hours<=24?dd.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}):dd.toLocaleDateString([],{month:'short',day:'numeric'});const w=g.measureText(s).width;g.fillText(s,Math.min(Math.max(X(t)-w/2,L),W-R-w),H-5)}
+ const nt=W<520?3:6;for(let i=0;i<=nt;i++){const t=t0+(t1-t0)*i/nt,dd=new Date(t*1000);const s=hours<=0.25?dd.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit',second:'2-digit'}):hours<=24?dd.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}):dd.toLocaleDateString([],{month:'short',day:'numeric'});const w=g.measureText(s).width;g.fillText(s,Math.min(Math.max(X(t)-w/2,L),W-R-w),H-5)}
  const acc=css('--acc'),bw=Math.max(1,(W-L-R)*hist.step_s/(hours*3600));g.fillStyle=acc;g.globalAlpha=.16;
  for(const p of rows)if(p.d){const h=p.d/255*(H-T-B);g.fillRect(X(p.t),H-B-h,bw,h)}g.globalAlpha=1;
  g.strokeStyle=acc;g.lineWidth=2;g.beginPath();let on=0,pt=null;
  for(const p of rows){if(p.T==null){on=0;continue}if(on&&pt&&p.t-pt>hist.step_s*3)on=0;on?g.lineTo(X(p.t),Y(p.T)):g.moveTo(X(p.t),Y(p.T));on=1;pt=p.t}g.stroke();
+ g.setLineDash([5,4]);g.strokeStyle=css('--fg');g.globalAlpha=.6;g.lineWidth=1.4;g.beginPath();let hon=0,hp=null;
+ for(const p of rows){if(p.h==null){hon=0;continue}if(hon&&hp&&p.t-hp>hist.step_s*3)hon=0;hon?g.lineTo(X(p.t),Y(p.h)):g.moveTo(X(p.t),Y(p.h));hon=1;hp=p.t}g.stroke();g.setLineDash([]);g.globalAlpha=1;
  pts=rows.filter(p=>p.T!=null).map(p=>({...p,x:X(p.t),y:Y(p.T)}))}
 function tip(e){if(!pts.length)return;const b=$('ch').getBoundingClientRect(),x=(e.touches?e.touches[0].clientX:e.clientX)-b.left;
  let p=pts[0];for(const q of pts)if(Math.abs(q.x-x)<Math.abs(p.x-x))p=q;draw();const g=$('ch').getContext('2d');g.fillStyle=css('--acc');g.beginPath();g.arc(p.x,p.y,4,0,7);g.fill();
- $('tip').textContent=`${new Date(p.t*1000).toLocaleString([],{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'})} · ${p.T.toFixed(2)} °C · heater ${Math.round((p.d||0)/2.55)}%`+(p.v!=null?` · VCCINT ${p.v.toFixed(3)} V`:'')}
+ $('tip').textContent=`${new Date(p.t*1000).toLocaleString([],{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'})} · ${p.T.toFixed(2)} °C · heater ${Math.round((p.d||0)/2.55)}%`+(p.h!=null?` · target ${p.h.toFixed(1)} °C`:'')+(p.v!=null?` · VCCINT ${p.v.toFixed(3)} V`:'')}
 $('ch').addEventListener('mousemove',tip);$('ch').addEventListener('touchmove',tip,{passive:true});$('ch').addEventListener('mouseleave',()=>{$('tip').innerHTML='&nbsp;';draw()});
 $('seg').onclick=e=>{const b=e.target.closest('button');if(!b)return;hours=+b.dataset.h;for(const x of $('seg').children)x.classList.toggle('on',x===b);history()};
 
@@ -303,7 +360,7 @@ function drawMap(n){
  const mhz=g.mhz;
  if(mapMode==='proc'){const ok=mhz.filter(a=>a!=null),m=ok.reduce((a,b)=>a+b,0)/ok.length;v=mhz.map(a=>a==null?null:(a-m)/m*1e6);note=`vs the die average (${m.toFixed(1)} MHz)`}
  else if(mapMode==='chg'){if(!g.ref){note='waiting for a heater-off reference'}else{v=mhz.map((a,i)=>a==null||g.ref[i]==null?null:(a-g.ref[i])/g.ref[i]*1e6);note=`vs heater-off frames ${g.ref_age_s<5?'(live)':g.ref_age_s+' s ago'}`}}
- else if(mapMode==='temp'){if(!g.temp){note=g.cal?'calibrated':'not calibrated yet: heat the die, then let it cool through 8 °C'}else{v=g.temp;unit='°C';fmt=a=>a.toFixed(1);note=(n.lab&&n.lab.duty)?'heater on: IR drop skews these, turn it off for a true map':`per-ring fit over ${g.cal.t_range[0].toFixed(0)}–${g.cal.t_range[1].toFixed(0)} °C`}}
+ else if(mapMode==='temp'){if(!g.temp){note=(g.cal&&g.cal.good===0)?'not reliable yet: the map reads its rings one at a time, so heater switching (PWM, the quiet window, the hold loop) lands on some rings and not others. Use Change to watch heating.':g.cal?((n.lab&&n.lab.duty)?'heater on: measure an IR-drop map first so its effect can be removed':'calibrated'):'not calibrated yet'}else{v=g.temp;unit='°C';fmt=a=>a.toFixed(1);note=`${g.cal.good||'?'} of 64 rings calibrated (fit over ${g.cal.t_range[0].toFixed(0)}–${g.cal.t_range[1].toFixed(0)} °C)`+((n.lab&&n.lab.duty)?'; IR drop removed using the last IR map':'')}}
  else if(mapMode==='ir'){if(!g.ir){note='no IR-drop map yet: press Measure'}else{v=g.ir.ppm;note=`measured ${new Date(g.ir.t*1000).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}; ring slowdown under full heater load`}}
  $('mapnote').textContent=note;
  const size=Math.min(W-40,H-10),cs=size/8,L=(W-size)/2+10,T=4;
@@ -339,7 +396,94 @@ function drawScope(){
  $('scnote').textContent=`${new Date(SC.t*1000).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})} · ${(SC.fs/1e6).toFixed(3)} MS/s · heater ${SC.load?'full':'off'} · ${SC.rms.toFixed(2)} taps rms around ${SC.mean.toFixed(0)}`;
  $('peaks').innerHTML='<tr><th>Peak</th><th>taps</th></tr>'+SC.peaks.map(p=>`<tr><td>${fmtHz(p.f)}</td><td>${p.a.toFixed(3)}</td></tr>`).join('');
 }
-addEventListener('resize',()=>{draw();if(S)drawMap(S);drawScope()});
-now();history();setInterval(now,1000);setInterval(age,1000);setInterval(history,30000);
+
+function cv(id){const c=$(id),r=devicePixelRatio||1,W=c.clientWidth,H=c.clientHeight;c.width=W*r;c.height=H*r;const x=c.getContext('2d');x.scale(r,r);x.font='10px system-ui';return [x,W,H]}
+function plotXY(id,pts,opt={}){const [x,W,H]=cv(id);x.fillStyle=css('--mut');
+ const p=pts.filter(q=>q[1]!=null);if(p.length<2){x.fillText(opt.empty||'not enough data yet',6,16);return}
+ const X0=Math.min(...p.map(q=>q[0])),X1=Math.max(...p.map(q=>q[0]));let lo=Math.min(...p.map(q=>q[1])),hi=Math.max(...p.map(q=>q[1]));const pad=(hi-lo)*.12||Math.abs(hi)*.01||1;lo-=pad;hi+=pad;
+ const L=46,R=6,T=6,B=18,X=v=>L+(v-X0)/((X1-X0)||1)*(W-L-R),Y=v=>T+(hi-v)/(hi-lo)*(H-T-B);
+ x.strokeStyle=css('--line');x.strokeRect(L,T,W-L-R,H-T-B);
+ for(let k=0;k<=3;k++){const v=lo+(hi-lo)*k/3;x.fillText((opt.fy||(a=>a.toFixed(1)))(v),2,Y(v)+3)}
+ x.fillText((opt.fx||(a=>a.toFixed(0)))(X0),L,H-4);const e=(opt.fx||(a=>a.toFixed(0)))(X1);x.fillText(e,W-R-x.measureText(e).width,H-4);
+ x.strokeStyle=opt.col||css('--acc');x.lineWidth=1.6;x.beginPath();p.forEach((q,i)=>i?x.lineTo(X(q[0]),Y(q[1])):x.moveTo(X(q[0]),Y(q[1])));x.stroke();
+ x.fillStyle=opt.col||css('--acc');if(!opt.nodots)p.forEach(q=>{x.beginPath();x.arc(X(q[0]),Y(q[1]),2.5,0,7);x.fill()})}
+function drawPuf(n){const P=n.puf;
+ $('pufid').textContent=P?P.id.replace(/(.{4})/g,'$1 ').trim():'--';$('pufkey').textContent=P&&P.key32?P.key32:'--';
+ $('pufhd').textContent=P&&P.hd64!=null?`${P.hd32} of 32 stable · ${P.hd64} of 64 all`:'waiting for a reference frame';
+ const [x,W,H]=cv('pufmap');if(!P)return;const cs=Math.min((H-6)/8,(W-6)/8),L=(W-cs*8)/2,st=new Set(P.stable||[]),fl=new Set(P.flipped||[]);
+ for(let i=0;i<64;i++){const r=Math.floor(i/8),c=i%8,X=L+c*cs,Y=(7-r)*cs+3;
+  x.fillStyle=P.bits[i]?css('--fg'):css('--soft');x.fillRect(X+2,Y+2,cs-4,cs-4);
+  if(st.has(i)){x.strokeStyle=css('--acc');x.lineWidth=2;x.strokeRect(X+2,Y+2,cs-4,cs-4)}
+  if(fl.has(i)){x.strokeStyle=css('--bad');x.lineWidth=3;x.beginPath();x.moveTo(X+4,Y+4);x.lineTo(X+cs-4,Y+cs-4);x.stroke()}}
+ $('pufnote').textContent='Dark = 1 (faster than median). Orange outline = one of the 32 stable bits. Red slash = flipped vs the reference taken when this bitstream first ran cool.'}
+function drawThermal(n){const t=n.thermal;
+ if(!t){return}
+ $('thtab').innerHTML=`<tr><td>Rise at full heater</td><td>${t.rise_full_c.toFixed(1)} °C</td></tr><tr><td>Ambient (no heater)</td><td>${t.ambient_c.toFixed(1)} °C</td></tr>
+  <tr><td>Fast time constant (die)</td><td>${t.tau_s[0].toFixed(0)} s <span class="note">(${t.weights[0].toFixed(1)} °C)</span></td></tr><tr><td>Slow time constant (package + board)</td><td>${t.tau_s[1].toFixed(0)} s <span class="note">(${t.weights[1].toFixed(1)} °C)</span></td></tr>
+  <tr><td>Fit residual</td><td>${t.rms_c.toFixed(2)} °C over ${t.span_min.toFixed(0)} min</td></tr>
+  <tr><td>Peak at full heater</td><td>${(t.ambient_c+t.rise_full_c).toFixed(1)} °C <span class="note">(cut-out at ${n.tmax} °C)</span></td></tr>`;
+ const pts=[];const end=4*t.tau_s[1];for(let i=0;i<=120;i++){const s=end*i/120;pts.push([s,t.ambient_c+t.weights[0]*(1-Math.exp(-s/t.tau_s[0]))+t.weights[1]*(1-Math.exp(-s/t.tau_s[1]))])}
+ plotXY('thstep',pts,{nodots:1,fx:a=>Math.round(a)+' s',fy:a=>a.toFixed(0)+'°'})}
+let BT=null;async function loadBT(){try{BT=await (await fetch('/api/bytemp',{cache:'no-store'})).json();drawBT()}catch(e){}}
+function drawBT(){if(!BT)return;const ix=k=>BT.cols.indexOf(k),rows=BT.rows.filter(r=>r[ix('n')]>=3);
+ const ro=k=>ix('ro'+k+'_mhz');const base=rows[0];
+ const ppm=rows.map(r=>{let s=0,c=0;for(let k=0;k<5;k++){const v=r[ro(k)],b=base&&base[ro(k)];if(v&&b){s+=(v-b)/b*1e6;c++}}return [r[0],c?s/c:null]});
+ plotXY('mg1',ppm,{fx:a=>a+'°',fy:a=>a.toFixed(0)});plotXY('mg2',rows.map(r=>[r[0],r[ix('droop_avg')]]),{fx:a=>a+'°',col:css('--acc2')});
+ plotXY('mg3',rows.map(r=>[r[0],r[ix('tdc_ps')]]),{fx:a=>a+'°',fy:a=>a.toFixed(1)});
+ plotXY('pufvt',rows.map(r=>[r[0],r[ix('puf_hd64')]]),{fx:a=>a+'°',fy:a=>a.toFixed(1),col:css('--bad'),empty:'fills in as the die visits different temperatures'});
+ const n=rows.reduce((a,r)=>a+r[ix('n')],0);$('mgnote').textContent=n?`${n} heater-off samples in ${rows.length} one-degree bins since this bitstream was loaded. With temperature inversion at 1.0 V the rings speed up as they warm.`:''}
+let WF=null;async function loadWF(){try{WF=await (await fetch('/api/waterfall',{cache:'no-store'})).json();drawWF()}catch(e){}}
+function drawWF(){const [x,W,H]=cv('wf');x.fillStyle=css('--mut');if(!WF||!WF.rows.length){x.fillText('first spectrum within a minute',6,16);return}
+ const rows=WF.rows.slice().reverse(),nb=WF.bins,L=30,B=16,rh=Math.max(2,(H-B)/60),cw=(W-L)/nb;
+ const all=rows.flatMap(r=>r.db),lo=Math.min(...all),hi=Math.max(...all);
+ rows.forEach((r,j)=>{r.db.forEach((v,i)=>{x.fillStyle=heat((v-lo)/((hi-lo)||1));x.fillRect(L+i*cw,j*rh,Math.ceil(cw),Math.ceil(rh))});
+  if(r.duty){x.fillStyle=css('--acc');x.fillRect(0,j*rh,6,Math.ceil(rh))}});
+ x.fillStyle=css('--mut');const lf=Math.log(WF.f_hi/WF.f_lo);[1e4,3e4,1e5,3e5,1e6,3e6].forEach(f=>{if(f<WF.f_lo||f>WF.f_hi)return;const X=L+Math.log(f/WF.f_lo)/lf*(W-L);x.fillText(fmtHz(f).replace('.0 ',' ').replace('.000 ',' '),Math.min(X,W-40),H-3)});
+ $('wfnote').textContent=`${rows.length} spectra · ${lo.toFixed(0)} to ${hi.toFixed(0)} dB re 1 tap · orange tick = heater was on`}
+let conSeq=0,conHist=[],conIdx=0;const CK={fpga:'#8da38a',tx:'#d6a55c',xadc:'#7fb6d6',trng:'#b58fd6',event:'#e8efe2',cmd:'#7fd17f',out:'#e8efe2'};
+function conShow(k){return k==='fpga'?$('cf-fpga').checked:k==='xadc'?$('cf-xadc').checked:k==='trng'?$('cf-trng').checked:true}
+function conAdd(l){const d=document.createElement('div');d.dataset.k=l.k;d.style.color=CK[l.k]||'#b8c2b0';if(!conShow(l.k))d.style.display='none';
+ const ts=new Date(l.t*1000).toLocaleTimeString([],{hour12:false});d.textContent=(l.k==='out'?'           ':ts+'  ')+(l.k==='tx'?'→ FPGA  ':'')+l.s;$('con').appendChild(d)}
+async function conPoll(){try{const r=await (await fetch('/api/console?after='+conSeq,{cache:'no-store'})).json();
+ const c=$('con'),atEnd=c.scrollHeight-c.scrollTop-c.clientHeight<30;r.lines.forEach(conAdd);if(r.lines.length)conSeq=r.lines[r.lines.length-1].n;
+ while(c.childNodes.length>800)c.removeChild(c.firstChild);if(atEnd)c.scrollTop=c.scrollHeight}catch(e){}}
+['fpga','xadc','trng'].forEach(k=>$('cf-'+k).onchange=()=>{for(const d of $('con').children)if(d.dataset.k===k)d.style.display=$('cf-'+k).checked?'':'none'});
+$('cin').addEventListener('keydown',async e=>{
+ if(e.key==='ArrowUp'&&conHist.length){conIdx=Math.max(0,conIdx-1);e.target.value=conHist[conIdx];e.preventDefault();return}
+ if(e.key==='ArrowDown'&&conHist.length){conIdx=Math.min(conHist.length,conIdx+1);e.target.value=conHist[conIdx]||'';e.preventDefault();return}
+ if(e.key!=='Enter')return;const cmd=e.target.value.trim();e.target.value='';if(!cmd)return;conHist.push(cmd);conIdx=conHist.length;
+ const say=t=>conAdd({t:Date.now()/1000,k:'out',s:t});
+ let r=null;for(let tryN=0;tryN<2&&!r;tryN++){try{r=await fetch('/api/console',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cmd})})}catch(err){if(tryN)say('could not reach the board ('+(err.message||err)+')');else await new Promise(z=>setTimeout(z,1500))}}
+ if(r){let j=null;try{j=await r.json()}catch(_){}
+  if(r.status===429)say('slow down: too many commands, try again in a minute');
+  else if(!j)say(`the board answered ${r.status}${r.status===503?' (the playground is not loaded right now)':''}`);
+  await conPoll();now()}
+ const c=$('con');c.scrollTop=c.scrollHeight});
+conPoll();setInterval(conPoll,1000);
+let EVT=null;
+async function loadEvt(){try{EVT=await (await fetch('/api/trng/vstemp',{cache:'no-store'})).json();drawEvt()}catch(e){}}
+function drawEvt(){
+ const c=$('evt'),r=devicePixelRatio||1,W=c.clientWidth,H=c.clientHeight;c.width=W*r;c.height=H*r;const x=c.getContext('2d');x.scale(r,r);
+ x.font='11px system-ui';x.fillStyle=css('--mut');
+ const b=(EVT&&EVT.bins||[]).filter(q=>q.n>=3);
+ if(b.length<2){x.fillText('Not enough data yet: it fills in as the die visits different temperatures',8,20);$('evtnote').textContent='';return}
+ const T0=Math.min(...b.map(q=>q.t_c))-1,T1=Math.max(...b.map(q=>q.t_c))+1;
+ let lo=Math.min(...b.map(q=>q.hmin_lo)),hi=Math.max(...b.map(q=>q.hmin_hi));const pad=Math.max(.002,(hi-lo)*.15);lo-=pad;hi+=pad;
+ const L=44,R=44,T=8,B=22,X=t=>L+(t-T0)/(T1-T0)*(W-L-R),Y=v=>T+(hi-v)/(hi-lo)*(H-T-B);
+ x.strokeStyle=css('--line');x.strokeRect(L,T,W-L-R,H-T-B);
+ for(let k=0;k<=4;k++){const v=lo+(hi-lo)*k/4;x.fillText(v.toFixed(3),4,Y(v)+4)}
+ for(let t=Math.ceil(T0/5)*5;t<=T1;t+=5){x.fillText(t+'°',X(t)-8,H-6)}
+ const acc=css('--acc'),acc2=css('--acc2');
+ x.strokeStyle=acc;x.globalAlpha=.35;b.forEach(q=>{x.beginPath();x.moveTo(X(q.t_c),Y(q.hmin_lo));x.lineTo(X(q.t_c),Y(q.hmin_hi));x.stroke()});x.globalAlpha=1;
+ x.fillStyle=acc;b.forEach(q=>{x.beginPath();x.arc(X(q.t_c),Y(q.hmin),Math.min(6,2+Math.log2(q.n)),0,7);x.fill()});
+ const plo=Math.min(...b.map(q=>q.p1))-.002,phi=Math.max(...b.map(q=>q.p1))+.002,Yp=v=>T+(phi-v)/(phi-plo)*(H-T-B);
+ x.strokeStyle=acc2;x.lineWidth=1.5;x.beginPath();b.forEach((q,i)=>i?x.lineTo(X(q.t_c),Yp(q.p1)):x.moveTo(X(q.t_c),Yp(q.p1)));x.stroke();
+ x.fillStyle=acc2;x.textAlign='right';x.fillText('P(1) '+phi.toFixed(3),W-2,T+10);x.fillText(plo.toFixed(3),W-2,H-B);x.textAlign='left';
+ const n=b.reduce((a,q)=>a+q.n,0);$('evtnote').textContent=`Orange dots: min-entropy (bit/bit) per 1 °C bin, bars show its range. Blue line: P(1) bias. ${n} samples over ${b.length} bins since this bitstream was loaded.`;
+}
+addEventListener('resize',()=>{draw();if(S){drawMap(S);drawPuf(S);drawThermal(S)}drawScope();drawEvt();drawBT();drawWF()});
+loadBT();setInterval(loadBT,60000);loadWF();setInterval(loadWF,60000);
+loadEvt();setInterval(loadEvt,60000);
+now();history();setInterval(now,1000);setInterval(age,1000);setInterval(()=>{if(hours<=0.25||Date.now()%30000<2100)history()},2000);
 </script>
 </body></html>
