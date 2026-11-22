@@ -134,9 +134,22 @@ cm4/fpga-manager/publish.sh        # from the Mac
 Logs: `journalctl -u fpga-manager -f`. LAN: `http://10.0.0.144:8091/manager/`.
 CLI on the Pi: `sudo fpga-flash switch trng --by kladams`, `fpga-flash state`.
 
-Public: `fpga.klayshomelab.com` currently routes to pvtd `:8090`. Pointing
-the tunnel route at `:8091` puts the manager at `/manager/` and keeps the
-playground at `/`, proxied. That's a public change, so it hasn't been made.
+## Public: one site for everything
+
+`fpga.klayshomelab.com` -> homelab-host `cloudflared` tunnel ->
+`http://10.0.0.144:8091` (this daemon, since 2026-11-22; the earlier route went
+straight to pvtd :8090, backup `config.yml.bak-fpga-manager`).
+
+- `/manager/`: this page, always available.
+- everything else: pvtd's playground page and API, proxied while the
+  playground is loaded. Cf-Connecting-Ip and Cf-Ipcountry pass through, so
+  pvtd's per-visitor limits still work.
+- With another project loaded (pvtd stopped), `/` redirects to `/manager/` and
+  the playground API answers 503 with a pointer there.
+- Viewing is public. Switching needs a login, and the cookie is `Secure` behind
+  Cloudflare. No Cloudflare Access.
+
+To go back: set the route to `:8090` again and `systemctl restart cloudflared` on homelab-host.
 
 ## Tests
 

@@ -95,6 +95,8 @@ module qmtech_ddr3 (
     // '2'/'3' -> sticky AND of DQS ISERDES samples, lane 0 / lane 1
     // '4'..'5'-> live DQS ISERDES sample, lane 0 / lane 1
     // '#'      -> clear the sticky registers
+    reg        req_pending = 0;
+    reg  [7:0] req_byte = 0;
     reg        dbg_valid = 0;
     reg  [7:0] dbg_data = 0;
     reg [15:0] dqs_or = 0, dqs_and = 16'hffff;
@@ -165,16 +167,20 @@ module qmtech_ddr3 (
             max_state <= 0; n_restart <= 0; rd_snap_valid <= 0;
             dqs_or  <= 0;
             dqs_and <= 16'hffff;
-        end else if (!o_wb_stall && m_axis_tvalid) begin
-            if (rd_data >= 8'd97 && rd_data <= 8'd122) begin        // 'a'..'z': write
-                i_wb_stb  <= 1;
+        end else if (m_axis_tvalid && ((rd_data >= 8'd97 && rd_data <= 8'd122) || (rd_data >= 8'd65 && rd_data <= 8'd90))) begin
+            req_pending <= 1;      // hold the request until the controller isn't stalled
+            req_byte    <= rd_data; // (a bare stb during a refresh stall was dropped)
+        end
+        if (req_pending && !o_wb_stall && !i_wb_stb) begin
+            req_pending <= 0;
+            i_wb_stb    <= 1;
+            if (req_byte >= 8'd97) begin                             // 'a'..'z': write
                 i_wb_we   <= 1;
-                i_wb_addr <= ~rd_data;
-                i_wb_data <= rd_data;
-            end else if (rd_data >= 8'd65 && rd_data <= 8'd90) begin // 'A'..'Z': read
-                i_wb_stb  <= 1;
+                i_wb_addr <= ~req_byte;
+                i_wb_data <= req_byte;
+            end else begin                                           // 'A'..'Z': read
                 i_wb_we   <= 0;
-                i_wb_addr <= ~(rd_data + 8'd32);
+                i_wb_addr <= ~(req_byte + 8'd32);
             end
         end
     end
