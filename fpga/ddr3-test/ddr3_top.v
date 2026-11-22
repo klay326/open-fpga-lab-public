@@ -60,7 +60,8 @@ module ddr3_top #(
         output wire[WB2_DATA_BITS - 1:0] o_wb2_data, //read data
         //
         // DDR3 I/O Interface
-        output wire o_ddr3_clk_p, o_ddr3_clk_n,
+        inout wire o_ddr3_clk_p, o_ddr3_clk_n,
+        output wire o_ck_probe,
         output wire o_ddr3_reset_n,
         output wire o_ddr3_cke, // CKE
         output wire o_ddr3_cs_n, // chip select signal
@@ -207,6 +208,7 @@ module ddr3_top #(
             // DDR3 I/O Interface
             .o_ddr3_clk_p(o_ddr3_clk_p),
             .o_ddr3_clk_n(o_ddr3_clk_n),
+            .o_ck_probe(o_ck_probe),
             .o_ddr3_reset_n(o_ddr3_reset_n),
             .o_ddr3_cke(o_ddr3_cke), // CKE
             .o_ddr3_cs_n(o_ddr3_cs_n), // chip select signal

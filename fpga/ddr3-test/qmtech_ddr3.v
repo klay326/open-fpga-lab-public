@@ -22,18 +22,18 @@ module qmtech_ddr3 (
     input  wire        clk50,
     input  wire        sw2_n,          // U26, active-low push button: reset
     // DDR3
-    output wire        ddr3_clk_p, ddr3_clk_n,
-    output wire        ddr3_reset_n,
-    output wire        ddr3_cke,
-    output wire        ddr3_ras_n,
-    output wire        ddr3_cas_n,
-    output wire        ddr3_we_n,
-    output wire [13:0] ddr3_addr,
-    output wire [2:0]  ddr3_ba,
+    inout  wire        ddr3_clk_p, ddr3_clk_n,
+    inout  wire        ddr3_reset_n,   // inout only for pad read-back (debug probes)
+    inout  wire        ddr3_cke,
+    inout  wire        ddr3_ras_n,
+    inout  wire        ddr3_cas_n,
+    inout  wire        ddr3_we_n,
+    inout  wire [13:0] ddr3_addr,
+    inout  wire [2:0]  ddr3_ba,
     inout  wire [15:0] ddr3_dq,
     inout  wire [1:0]  ddr3_dqs_p, ddr3_dqs_n,
     output wire [1:0]  ddr3_dm,
-    output wire        ddr3_odt,
+    inout  wire        ddr3_odt,
     // UART
     input  wire        rx,
     output wire        tx,
@@ -88,6 +88,8 @@ module qmtech_ddr3 (
     reg        dbg_valid = 0;
     reg  [7:0] dbg_data = 0;
     reg [15:0] dqs_or = 0, dqs_and = 16'hffff;
+    reg  [3:0] pad_clr_cnt = 0;   // stretches '#' so the 200 MHz domain sees it
+    wire       pad_clr = |pad_clr_cnt;
     wire [15:0] dqs_now = o_debug1[31:16];
 
     always @(posedge i_controller_clk) begin
@@ -96,11 +98,26 @@ module qmtech_ddr3 (
         i_wb_addr <= 0;
         i_wb_data <= 0;
         dbg_valid <= 0;
+        if (pad_clr_cnt != 0) pad_clr_cnt <= pad_clr_cnt - 1'b1;
         dqs_or  <= dqs_or  | dqs_now;
         dqs_and <= dqs_and & dqs_now;
         if (m_axis_tvalid && rd_data == 8'h3F) begin                // '?': status
             dbg_valid <= 1;
             dbg_data  <= 8'h40 + {3'b000, o_debug1[4:0]};
+        end else if (m_axis_tvalid && rd_data >= 8'h39 && rd_data <= 8'h3E) begin
+            dbg_valid <= 1;
+            case (rd_data)
+                8'h39: dbg_data <= ab_or[7:0];
+                8'h3A: dbg_data <= ab_or[15:8];
+                8'h3B: dbg_data <= {7'd0, ab_or[16]};
+                8'h3C: dbg_data <= ab_and[7:0];
+                8'h3D: dbg_data <= ab_and[15:8];
+                default: dbg_data <= {7'd0, ab_and[16]};
+            endcase
+        end else if (m_axis_tvalid && rd_data >= 8'h36 && rd_data <= 8'h38) begin
+            dbg_valid <= 1;
+            dbg_data  <= rd_data == 8'h36 ? {1'b0, pad_or} :
+                         rd_data == 8'h37 ? {1'b0, pad_and} : {1'b0, pad_s2};
         end else if (m_axis_tvalid && rd_data >= 8'h30 && rd_data <= 8'h35) begin
             dbg_valid <= 1;
             case (rd_data[2:0])
@@ -112,6 +129,7 @@ module qmtech_ddr3 (
                 default: dbg_data <= dqs_now[15:8];
             endcase
         end else if (m_axis_tvalid && rd_data == 8'h23) begin       // '#': clear
+            pad_clr_cnt <= 4'hf;
             dqs_or  <= 0;
             dqs_and <= 16'hffff;
         end else if (!o_wb_stall && m_axis_tvalid) begin
@@ -137,6 +155,48 @@ module qmtech_ddr3 (
         .prescale(16'd1085)   // 83.333 MHz / (9600 * 8)
     );
 
+    // ---------------- pad read-back probes (debug) ----------------
+    // Control outputs go through IOBUFs with T=0: they drive exactly as an
+    // OBUF would, and the receiver reads back what is really on the pad.
+    // Sampled with the 200 MHz ref clock (not locked to 333 MHz CK), so a
+    // toggling pad shows up as both 0 and 1 in the sticky OR/AND.
+    //   bit 6 CK, 5 RESET#, 4 CKE, 3 RAS#, 2 CAS#, 1 WE#, 0 ODT
+    wire o_reset_n, o_cke, o_ras_n, o_cas_n, o_we_n, o_odt, ck_probe;
+    wire [5:0] pad_in;
+    IOBUF #(.IOSTANDARD("LVCMOS15")) iob_reset (.IO(ddr3_reset_n), .I(o_reset_n), .T(1'b0), .O(pad_in[5]));
+    IOBUF #(.IOSTANDARD("SSTL15")) iob_cke   (.IO(ddr3_cke),   .I(o_cke),   .T(1'b0), .O(pad_in[4]));
+    IOBUF #(.IOSTANDARD("SSTL15")) iob_ras   (.IO(ddr3_ras_n), .I(o_ras_n), .T(1'b0), .O(pad_in[3]));
+    IOBUF #(.IOSTANDARD("SSTL15")) iob_cas   (.IO(ddr3_cas_n), .I(o_cas_n), .T(1'b0), .O(pad_in[2]));
+    IOBUF #(.IOSTANDARD("SSTL15")) iob_we    (.IO(ddr3_we_n),  .I(o_we_n),  .T(1'b0), .O(pad_in[1]));
+    IOBUF #(.IOSTANDARD("SSTL15")) iob_odt   (.IO(ddr3_odt),   .I(o_odt),   .T(1'b0), .O(pad_in[0]));
+    reg [2:0] pclr_s = 0;
+    // address/bank read-back: same scheme, 17 bits {ba, addr}
+    wire [13:0] o_addr; wire [2:0] o_ba; wire [16:0] ab_in;
+    genvar gi;
+    generate for (gi = 0; gi < 14; gi = gi + 1) begin : g_addr
+        IOBUF #(.IOSTANDARD("SSTL15")) iob (.IO(ddr3_addr[gi]), .I(o_addr[gi]), .T(1'b0), .O(ab_in[gi]));
+    end
+    for (gi = 0; gi < 3; gi = gi + 1) begin : g_ba
+        IOBUF #(.IOSTANDARD("SSTL15")) iob (.IO(ddr3_ba[gi]), .I(o_ba[gi]), .T(1'b0), .O(ab_in[14 + gi]));
+    end endgenerate
+    reg [16:0] ab_s1 = 0, ab_s2 = 0, ab_or = 0, ab_and = 17'h1ffff;
+    always @(posedge i_ref_clk) begin
+        ab_s1 <= ab_in; ab_s2 <= ab_s1;
+        if (pclr_s[2]) begin ab_or <= 0; ab_and <= 17'h1ffff; end
+        else begin ab_or <= ab_or | ab_s2; ab_and <= ab_and & ab_s2; end
+    end
+    reg [6:0] pad_s1 = 0, pad_s2 = 0, pad_or = 0, pad_and = 7'h7f;
+    always @(posedge i_ref_clk) begin
+        pad_s1 <= {ck_probe, pad_in};
+        pad_s2 <= pad_s1;
+        pclr_s <= {pclr_s[1:0], pad_clr};
+        if (pclr_s[2]) begin
+            pad_or <= 0; pad_and <= 7'h7f;
+        end else begin
+            pad_or <= pad_or | pad_s2; pad_and <= pad_and & pad_s2;
+        end
+    end
+
     // ---------------- DDR3 controller ----------------
     ddr3_top #(
         .ROW_BITS(14), .COL_BITS(10), .BA_BITS(3),
@@ -157,13 +217,13 @@ module qmtech_ddr3 (
         .i_wb2_cyc(1'b0), .i_wb2_stb(1'b0), .i_wb2_we(1'b0), .i_wb2_addr(32'd0),
         .i_wb2_data(32'd0), .i_wb2_sel(4'd0),
         .o_wb2_stall(), .o_wb2_ack(), .o_wb2_data(),
-        .o_ddr3_clk_p(ddr3_clk_p), .o_ddr3_clk_n(ddr3_clk_n),
-        .o_ddr3_reset_n(ddr3_reset_n), .o_ddr3_cke(ddr3_cke),
+        .o_ddr3_clk_p(ddr3_clk_p), .o_ddr3_clk_n(ddr3_clk_n), .o_ck_probe(ck_probe),
+        .o_ddr3_reset_n(o_reset_n), .o_ddr3_cke(o_cke),
         .o_ddr3_cs_n(),            // CS# is tied low on this board
-        .o_ddr3_ras_n(ddr3_ras_n), .o_ddr3_cas_n(ddr3_cas_n), .o_ddr3_we_n(ddr3_we_n),
-        .o_ddr3_addr(ddr3_addr), .o_ddr3_ba_addr(ddr3_ba),
+        .o_ddr3_ras_n(o_ras_n), .o_ddr3_cas_n(o_cas_n), .o_ddr3_we_n(o_we_n),
+        .o_ddr3_addr(o_addr), .o_ddr3_ba_addr(o_ba),
         .io_ddr3_dq(ddr3_dq), .io_ddr3_dqs(ddr3_dqs_p), .io_ddr3_dqs_n(ddr3_dqs_n),
-        .o_ddr3_dm(ddr3_dm), .o_ddr3_odt(ddr3_odt),
+        .o_ddr3_dm(ddr3_dm), .o_ddr3_odt(o_odt),
         .o_debug1(o_debug1)
     );
 

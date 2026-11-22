@@ -40,7 +40,8 @@ module ddr3_phy #(
         output wire[LANES*8-1:0] o_controller_iserdes_bitslip_reference,
         output wire o_controller_idelayctrl_rdy,
         // DDR3 I/O Interface
-        output wire o_ddr3_clk_p,o_ddr3_clk_n,
+        inout wire o_ddr3_clk_p,o_ddr3_clk_n, // QMTech: inout so the pad can be read back (o_ck_probe)
+        output wire o_ck_probe,
         output wire o_ddr3_reset_n,
         output wire o_ddr3_cke, // CKE
         output wire o_ddr3_cs_n, // chip select signal
@@ -281,6 +282,7 @@ module ddr3_phy #(
         .I(ddr3_clk_delayed) // Buffer input
         );
         // End of OBUFDS_inst instantiation
+        assign o_ck_probe = 1'b0;
     end
     else begin //ODELAY is not supported
         // OBUFDS: Differential Output Buffer
@@ -289,15 +291,29 @@ module ddr3_phy #(
         // QMTech: forward CK (= !i_ddr3_clk) through an ODDR in the IO tile,
         // launched like the command bus, instead of routing a global clock
         // through fabric into the pad.
+        // CK from an OSERDESE2 (DDR 8:1, same setup as the command bus) with
+        // pattern 0101_0101 -> CK = !i_ddr3_clk. An ODDR here only ever
+        // drives D1 in this flow (its D2/falling-edge half is dead in HP IOI
+        // tiles -- pad read-back: D1=0/D2=1 -> 0, D1=1/D2=0 -> 1).
         wire ddr3_clk_oddr;
-        ODDR #(.DDR_CLK_EDGE("SAME_EDGE"), .INIT(1'b0), .SRTYPE("SYNC")) ODDR_ck (
-            .Q(ddr3_clk_oddr), .C(i_ddr3_clk), .CE(1'b1),
-            .D1(1'b0), .D2(1'b1), .R(1'b0), .S(1'b0)
+        (* keep *) reg [7:0] ck_pat = 8'h00;
+        always @(posedge i_controller_clk) ck_pat <= sync_rst ? 8'h00 : 8'b1010_1010; // D8..D1
+        OSERDESE2 #(
+            .DATA_RATE_OQ("DDR"), .DATA_RATE_TQ("SDR"), .DATA_WIDTH(8),
+            .INIT_OQ(1'b0), .SERDES_MODE("MASTER"), .TRISTATE_WIDTH(1)
+        ) OSERDESE2_ck (
+            .OQ(ddr3_clk_oddr), .OFB(), .TQ(), .TFB(), .SHIFTOUT1(), .SHIFTOUT2(), .TBYTEOUT(),
+            .CLK(i_ddr3_clk), .CLKDIV(i_controller_clk),
+            .D1(ck_pat[0]), .D2(ck_pat[1]), .D3(ck_pat[2]), .D4(ck_pat[3]),
+            .D5(ck_pat[4]), .D6(ck_pat[5]), .D7(ck_pat[6]), .D8(ck_pat[7]),
+            .OCE(1'b1), .RST(sync_rst), .SHIFTIN1(1'b0), .SHIFTIN2(1'b0),
+            .T1(1'b0), .T2(1'b0), .T3(1'b0), .T4(1'b0), .TBYTEIN(1'b0), .TCE(1'b0)
         );
-        OBUFDS OBUFDS_inst (
-        .O(o_ddr3_clk_p), // Diff_p output (connect directly to top-level port)
-        .OB(o_ddr3_clk_n), // Diff_n output (connect directly to top-level port)
-        .I(ddr3_clk_oddr) // Buffer input
+        // QMTech debug: IOBUFDS with T=0 drives CK exactly like OBUFDS, and its
+        // receiver reads the pad back (o_ck_probe) to prove CK really toggles.
+        IOBUFDS #(.IOSTANDARD("DIFF_SSTL15")) IOBUFDS_ck (
+        .IO(o_ddr3_clk_p), .IOB(o_ddr3_clk_n),
+        .I(ddr3_clk_oddr), .T(1'b0), .O(o_ck_probe)
         );
     end
     

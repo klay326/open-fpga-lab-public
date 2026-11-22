@@ -184,7 +184,48 @@ Findings so far:
   timing model is pessimistic (LiteX ran fine at 100 MHz with an "84 MHz"
   report), but probably not by 30%.
 
+### Pad read-back probes (2026-11-22)
+
+With no scope available, the control, address and bank outputs (and CK)
+are now IOBUFs with T=0. They drive exactly as an OBUF would, and their
+receivers read the pad back. A 200 MHz sampler, not locked to the 333 MHz
+CK, keeps sticky OR/AND registers, readable over the UART (`pads.py`,
+`abpads.py`; `6`/`7`/`8` and `9`..`>`).
+
+- **CK was a flat line in every build with the ODDR.** In this flow, an ODDR
+  in an HP IO tile only ever drives D1: D1=0/D2=1 reads 0, D1=1/D2=0 reads 1.
+  A slow square wave on D1=D2 does reach the pad, so the clock, output path
+  and probe all work, and only the falling-edge (D2) half is dead. The same
+  holds with D1/D2 from flip-flops instead of constants. CK now comes from an
+  OSERDESE2 (DDR 8:1, pattern 0101_0101, the same setup the DQS OSERDES
+  uses), and it toggles on the pad. This is an open-flow bug worth reporting
+  (nextpnr-xilinx or prjxray-db: ODDR in `RIOI_TBYTESRC`).
+- With CK running: RESET# and CKE are high, and RAS#/CAS#/WE# toggle. Since
+  configuration, A0-A10, A12, A13 and BA0-2 have all toggled; A11 stayed 0,
+  which is plausible for these MR values. CS# is tied low on the board (MIG
+  has no CS# pin either).
+- DQS with opposite pulls reads `0xff` on both lanes, so the FPGA releases
+  DQS and the capture path works. Without pulls it reads `0x00`: **the DRAM
+  still never drives DQS** during MPR reads. Inverting the CK pattern (moving
+  the command sampling point half a period) changes nothing.
+
+So every DRAM input pin now toggles, and the DRAM still doesn't answer. What
+the probes can't show is timing at the DRAM: command/address setup and hold
+around CK, the CK frequency itself, and whether the init sequence and its
+timing are right.
+
 Next, cheapest first:
+1. Simulate the PHY plus controller init with a DDR3 model (Micron's
+   `ddr3.v`; UberDDR3 has `MICRON_SIM`) at the exact parameters used here,
+   to rule out a port/config error in init.
+2. Capture the pad-level command stream in fabric: ISERDES on the RAS#,
+   CAS#, WE# and A10 pads, clocked like the DRAM, into a small trace buffer
+   dumped over the UART. That shows the actual MRS/ZQCL/MPR sequence and its
+   alignment to CK.
+3. The controller-domain timing failure (47-64 MHz vs 83 MHz, below)
+   remains: pipeline the calibration FSM.
+
+Older notes:
 1. Find out *which* endpoints fail (all of them, not just the worst). If any
    feed the command OSERDES D inputs, commands are being corrupted. A
    pipeline register stage there is cheap.
