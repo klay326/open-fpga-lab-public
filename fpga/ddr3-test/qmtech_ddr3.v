@@ -142,7 +142,7 @@ module qmtech_ddr3 (
         .ROW_BITS(14), .COL_BITS(10), .BA_BITS(3),
         .DQ_BITS(8), .LANES(2),
         .CONTROLLER_CLK_PERIOD(12), .DDR3_CLK_PERIOD(3),
-        .ODELAY_SUPPORTED(1),     // bank 34 is HP: ODELAYE2 exists (Arty S7 HR banks needed 0)
+        .ODELAY_SUPPORTED(0),     // HP bank has ODELAYE2, but prjxray-db has no feature routing its output back to the pad, so use the 90-deg-clock scheme
         .AUX_WIDTH(16), .WB2_ADDR_BITS(32), .WB2_DATA_BITS(32),
         .OPT_LOWPOWER(1), .OPT_BUS_ABORT(1),
         .MICRON_SIM(0), .TEST_DATAMASK(1)

@@ -286,10 +286,18 @@ module ddr3_phy #(
         // OBUFDS: Differential Output Buffer
         // 7 Series
         // Xilinx HDL Libraries Guide, version 13.4
+        // QMTech: forward CK (= !i_ddr3_clk) through an ODDR in the IO tile,
+        // launched like the command bus, instead of routing a global clock
+        // through fabric into the pad.
+        wire ddr3_clk_oddr;
+        ODDR #(.DDR_CLK_EDGE("SAME_EDGE"), .INIT(1'b0), .SRTYPE("SYNC")) ODDR_ck (
+            .Q(ddr3_clk_oddr), .C(i_ddr3_clk), .CE(1'b1),
+            .D1(1'b0), .D2(1'b1), .R(1'b0), .S(1'b0)
+        );
         OBUFDS OBUFDS_inst (
         .O(o_ddr3_clk_p), // Diff_p output (connect directly to top-level port)
         .OB(o_ddr3_clk_n), // Diff_n output (connect directly to top-level port)
-        .I(i_ddr3_clk_180) // Buffer input
+        .I(ddr3_clk_oddr) // Buffer input
         );
     end
     

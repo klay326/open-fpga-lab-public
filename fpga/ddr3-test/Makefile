@@ -16,6 +16,14 @@ PNR_ARGS = --timing-allow-fail
 
 include ../openXC7.mk
 
+# nextpnr-xilinx (bd9c74c5) ignores `set_property INTERNAL_VREF` and always
+# emits HCLK_IOI.VREF.V_675_MV for any SSTL bank (correct for SSTL135/DDR3L,
+# wrong for SSTL15). This board is SSTL15 DDR3 on internal VREF; Vivado's MIG
+# sets 0.75 V (HCLK_IOI_X235Y130.VREF.V_750_MV). Fix it up in the FASM.
+${PROJECT}.frames: ${PROJECT}.fasm
+	sed -e 's/\.VREF\.V_675_MV$$/.VREF.V_750_MV/' $< > ${PROJECT}.vref.fasm
+	fasm2frames --part ${PART} --db-root ${PRJXRAY_DB_DIR}/${FAMILY} ${PROJECT}.vref.fasm > $@
+
 .PHONY: test
 test:
 	python3 test.py

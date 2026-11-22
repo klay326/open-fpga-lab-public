@@ -1,3 +1,12 @@
+# The toolchain env (~/opt/openxc7/export.sh on the Mac) sets PATH, CHIPDB,
+# KINTEX7_CHIPDB and PRJXRAY_DB_DIR. Without it, CHIPDB falls back to ../chipdb/
+# and make tries to regenerate the 462 MB chip database from a Linux snap path.
+ifeq ($(strip $(KINTEX7_CHIPDB)$(CHIPDB_OK)),)
+ifneq ($(MAKECMDGOALS),clean)
+$(error Toolchain env not loaded: run `source ~/opt/openxc7/export.sh` first (see MACOS-SETUP.md))
+endif
+endif
+
 NEXTPNR_XILINX_DIR ?= /snap/openxc7/current/opt/nextpnr-xilinx
 NEXTPNR_XILINX_PYTHON_DIR ?= ${NEXTPNR_XILINX_DIR}/python
 PRJXRAY_DB_DIR ?= ${NEXTPNR_XILINX_DIR}/external/prjxray-db
