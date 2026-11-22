@@ -1,0 +1,14 @@
+#!/bin/bash
+# Apple clang rejects bare -fopenmp; nextpnr-xilinx's CMakeLists hardcodes it.
+# Rewrite to Homebrew libomp's form, and link -lomp on link steps.
+OMP=/opt/homebrew/opt/libomp
+args=(); compile_only=0; omp=0
+for a in "$@"; do
+  case "$a" in
+    -fopenmp) args+=(-Xpreprocessor -fopenmp -I"$OMP/include"); omp=1 ;;
+    -c) compile_only=1; args+=("$a") ;;
+    *) args+=("$a") ;;
+  esac
+done
+if [ $omp = 1 ] && [ $compile_only = 0 ]; then args+=(-L"$OMP/lib" -lomp -Wl,-rpath,"$OMP/lib"); fi
+exec /usr/bin/clang++ "${args[@]}"

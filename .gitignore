@@ -14,3 +14,6 @@
 __pycache__/
 vivado_lab*.jou
 vivado_lab*.log
+
+# LiteX build dirs (firmware Makefile default BUILD_DIR points here)
+build-qmtech-k7-*/

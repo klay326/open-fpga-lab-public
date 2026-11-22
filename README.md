@@ -138,11 +138,12 @@ JTAG header (J1 pin 6) or any other board ground point.
 
 ## Known limitations / future work
 
-- **DDR3 is not yet working** through the open-source toolchain -- the
-  Kintex-7 `prjxray-db` is missing segment definitions for some I/O bank
-  cascade primitives the DDR3 PHY needs (`IOB_COL_OBUF_CASCADE_Y1`,
-  `IOB_COL_BANK_ACTIVE`). Two ways forward: patch/complete that database, or
-  synthesize with a paid Vivado Standard/Enterprise license instead.
+- **DDR3 builds but doesn't run yet.** The pinned `prjxray-db` (`7a36171`)
+  lacks bits for 5 HP-bank IO features. Upstream HEAD adds them, but they're
+  mirrored from Virtex-7 (not fuzzed on Kintex-7), and the resulting DDR3
+  bitstreams fail on hardware (spurious-IRQ flood at 100 MHz, dead console at
+  75 MHz). The hardware results and next experiments are in
+  [`docs/DDR3-STATUS.md`](docs/DDR3-STATUS.md).
 - **Button-controlled runtime overclock** (a `BUFGMUX`-based clock switch
   selecting between two PLL outputs) was prototyped and confirmed working
   for LED speed, but caused a spurious-interrupt regression that wasn't

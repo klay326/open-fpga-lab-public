@@ -73,8 +73,12 @@ PATH="/opt/homebrew/opt/bison/bin:/opt/homebrew/opt/flex/bin:$PATH" \
 cmake --build build && cmake --install build
 cd ..
 
-# nextpnr-xilinx bd9c74c5. Apple clang has no -fopenmp: USE_OPENMP=OFF
-# (it only speeds up the HeAP placer; output for blinky is unchanged).
+# nextpnr-xilinx bd9c74c5. Apple clang rejects bare -fopenmp, which the
+# CMakeLists hardcodes. Either use USE_OPENMP=OFF, or (installed build) brew
+# install libomp and point CMAKE_CXX_COMPILER at the clang++-omp wrapper,
+# which rewrites -fopenmp to "-Xpreprocessor -fopenmp" and links -lomp. Measured on
+# litex-minimal: 9.33 s vs 9.11 s, FASM byte-identical. OpenMP only covers
+# the HeAP placer (~1.2 s), so it barely matters.
 # Boost 1.92 prints FindBoost warnings; they're harmless.
 git clone https://github.com/openXC7/nextpnr-xilinx.git && cd nextpnr-xilinx
 git checkout bd9c74c5b90b65e33a5bcd1de124982441375768
@@ -171,30 +175,58 @@ fallback there; the `flash.tcl` files are kept for that.
 
 ## LiteX environment
 
+Verified 2026-11-22. A venv with only the repos this target imports, each at
+its pinned commit from `handoff/toolchain/VERSIONS.md`. Skip `litex_setup.py`.
+
 ```bash
-python3 -m venv ~/litex-venv
-source ~/litex-venv/bin/activate
-pip install meson ninja        # not pulled in automatically
+brew install riscv64-elf-gcc riscv64-elf-binutils   # GCC 16.2.0; LiteX detects the riscv64-elf triple
+mkdir -p ~/opt/litex && cd ~/opt/litex
+while read url sha; do d=$(basename $url .git)
+  git clone -q $url $d && (cd $d && git checkout -q $sha && git submodule update --init --recursive -q)
+done <<'EOF'
+https://github.com/m-labs/migen.git 4c2ae8dfeea37f235b52acb8166f12acaaae4f7c
+https://github.com/enjoy-digital/litex.git cfb382f54f81a1b3e6d7fcaa9db1a011007dd764
+https://github.com/litex-hub/litex-boards.git b8424ee7487281c29750c75ffee4532d56db5015
+https://github.com/enjoy-digital/litedram.git 3cf585a60a37113f18a9f6c6f3ee774be521623e
+https://github.com/enjoy-digital/liteeth.git 8c9150ff121cb3148d8ea26ce3b1c5200479848d
+https://github.com/litex-hub/pythondata-cpu-vexriscv.git 642ecfed1c84460555d6d803d660cc60cfc1ecb6
+https://github.com/litex-hub/pythondata-software-picolibc.git 6a13ccce7c575b32c102dd9dc52178505b81fe39
+https://github.com/litex-hub/pythondata-software-compiler_rt.git 6eb76609c9627bf26635e57c63fb22cda7115887
+EOF
+/opt/homebrew/bin/python3.12 -m venv ~/opt/litex/venv
+~/opt/litex/venv/bin/pip install meson==1.12.0 ninja==1.13.2 pyserial==3.5 pyyaml requests packaging
+for d in migen litex litex-boards litedram liteeth pythondata-cpu-vexriscv \
+         pythondata-software-picolibc pythondata-software-compiler_rt; do
+  ~/opt/litex/venv/bin/pip install --no-deps -e $d
+done
 ```
 
-RISC-V GCC toolchain: on Linux, `litex_setup.py --gcc=riscv` tried to
-`pacman install` without root and failed; it had to be installed manually.
-On macOS there's no equivalent LiteX-automated path either -- use the
-[xPack RISC-V toolchain](https://github.com/xpack-dev-tools/riscv-none-elf-gcc-xpack)
-or a Homebrew RISC-V tap, and make sure it ends up on `PATH` before running
-`litex_setup.py`.
-
-Set the chipdb path (needed by the openxc7 toolchain backend):
-```bash
-export CHIPDB=~/chipdb
-```
+`CHIPDB` and `PRJXRAY_DB_DIR` come from `~/opt/openxc7/export.sh`.
 
 ## Building the SoC bitstream
 
 ```bash
-python3 litex-soc/qmtech_kintex7_devboard.py \
+source ~/opt/openxc7/export.sh && source ~/opt/litex/venv/bin/activate
+mkdir -p build-qmtech-k7-minimal && cd build-qmtech-k7-minimal   # gitignored; firmware's default BUILD_DIR
+python3 ../litex-soc/qmtech_kintex7_devboard.py \
     --toolchain=openxc7 --integrated-main-ram-size=0x8000 --build
+make -C ../firmware/led-chase
+litex_term /dev/cu.usbserial-B002EN6R --kernel ../firmware/led-chase/main.bin --serial-boot
 ```
+
+Verified on the Mac (2026-11-22):
+- The whole SoC build takes 28 s: yosys about 6 s, nextpnr about 9 s,
+  fasm2frames about 8 s.
+- Generated headers match the Linux build apart from timestamps, so the CSR
+  map is the same.
+- BIOS: `CRC passed`, `VexRiscv @ 100MHz`, `Memtest OK`, 205.7 MiB/s write,
+  107.0 MiB/s read.
+- Serial-boot runs at 10.8 KB/s, and `x86` runs.
+- nextpnr reports sys clk at about 84 MHz ("FAIL at 100 MHz"), yet the
+  hardware runs clean at 100 MHz. LiteX passes `--timing-allow-fail`.
+
+The FT232R shows up as `/dev/cu.usbserial-B002EN6R` with Apple's built-in
+driver.
 
 - `--integrated-main-ram-size=0x8000` means block-RAM-only (32KB), no DDR3
   -- the open-source Kintex-7 database (`prjxray-db`) is missing segment
