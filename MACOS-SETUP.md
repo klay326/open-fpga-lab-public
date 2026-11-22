@@ -28,12 +28,15 @@ below.
 Everything built this session is published at:
 
 ```
-https://github.com/klay326/qmtech-k7-riscv-computer
+https://github.com/klay326/open-fpga-lab
 ```
+
+(Renamed from `qmtech-k7-riscv-computer` on 2026-11-22; GitHub redirects the old URL.)
 
 Clone it on the Mac:
 ```bash
-git clone https://github.com/klay326/qmtech-k7-riscv-computer.git
+# keep the old folder name: docs and scripts refer to ~/projects/qmtech-k7-riscv-computer
+git clone https://github.com/klay326/open-fpga-lab.git qmtech-k7-riscv-computer
 ```
 
 Read its main `README.md` for the project overview; this file is only the

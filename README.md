@@ -1,4 +1,10 @@
-# QMTech Kintex-7 RISC-V Computer
+# open-fpga-lab
+
+FPGA projects on a fully open toolchain (yosys + nextpnr-xilinx + prjxray):
+the RISC-V computer, plus PVT/thermal lab, TRNG, DDR3 bring-up and more under
+`fpga/`. (Formerly `qmtech-k7-riscv-computer`.)
+
+## QMTech Kintex-7 RISC-V Computer
 
 Bring-up and demo projects for a **QMTech XC7K325T Kintex-7 development board**,
 built entirely through an open-source FPGA toolchain (yosys + nextpnr-xilinx +
