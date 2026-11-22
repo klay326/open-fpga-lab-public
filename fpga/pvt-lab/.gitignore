@@ -1,0 +1,5 @@
+*.log
+*.csv
+*.svg
+calib.json
+__pycache__/
