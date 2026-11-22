@@ -54,8 +54,8 @@ a hash, `fpga-flash` requires the file and every directory above it to be
 root-owned and not group- or world-writable (`"trust": "root-owned"`), and it
 records the hash it flashed in `state.json` and the queue note.
 
-Without `--rehash`, `publish.sh` stops if any source no longer matches its
-catalogued hash, so a rebuild can't slip in by accident. `install.sh` checks
+Without `--rehash`, a source that no longer matches its catalogued hash is
+skipped with a warning, and the Pi keeps the catalogued build. A rebuild can't slip in by accident. `install.sh` checks
 the hashes again on the Pi, and `fpga-flash` checks them before every flash.
 
 | id | what it speaks | where the CM4 can see it | panel / health |

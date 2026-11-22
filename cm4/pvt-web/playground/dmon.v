@@ -31,7 +31,9 @@ module dmon #(
     output reg  [8:0]  wmax = 9'h000,
     output reg  [23:0] wsum = 24'd0,
     output reg         alarm_lo = 1'b0,
-    output reg         alarm_hi = 1'b0
+    output reg         alarm_hi = 1'b0,
+    output wire [8:0]  pos_o,       // per-cycle position (for scope.v)
+    output wire        vld_o
 );
     localparam NT = 4 * NC;
 
@@ -91,6 +93,8 @@ module dmon #(
         for (m = 0; m < NC/4; m = m + 1) acc = acc + p16[m];
     end
     always @(posedge clk) begin pos <= acc; rise3 <= rise2; end
+    assign pos_o = pos;
+    assign vld_o = rise3;
 
     // window statistics + alarms
     reg [8:0]  cmin = 9'h1FF, cmax = 9'h000;

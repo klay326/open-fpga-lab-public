@@ -24,11 +24,17 @@ module ro_monitor #(
     (* keep, BEL = {LOC, "/C6LUT"} *) LUT1 #(.INIT(2'b10))   s2 (.O(n2), .I0(n1));
     (* keep, BEL = {LOC, "/D6LUT"} *) LUT1 #(.INIT(2'b10))   s3 (.O(n3), .I0(n2));
 
-    // RO domain
-    reg        half = 1'b0;
+    // RO domain. playground: divide by 4 next to the ring before the counter
+    // (like fpga/pvt-lab ro_grid.v). A /2 signal at 200-300 MHz routed as a
+    // clock to the counter swallowed edges in some builds (ro1 read 492, ~300,
+    // 0, 490, 0 MHz across builds). count is doubled below so the line format
+    // and f = 2*count*50e6/2^20 stay the same (1 LSB of ~2.5M lost).
+    (* clkbuf_inhibit *) reg half = 1'b0;
+    (* clkbuf_inhibit *) reg quarter = 1'b0;
     always @(posedge n3) half <= ~half;
+    always @(posedge half) quarter <= ~quarter;
     reg [23:0] bin = 24'd0, gray = 24'd0;
-    always @(posedge half) begin
+    always @(posedge quarter) begin
         bin  <= bin + 1'b1;
         gray <= bin ^ (bin >> 1);
     end
@@ -54,7 +60,7 @@ module ro_monitor #(
         gate <= gate + 1'b1;
         if (&gate) gsnap <= g2;
         if (gate == 20'd255) begin       // decode has had 256 cycles to settle
-            count <= b - prev;
+            count <= (b - prev) << 1;
             prev  <= b;
         end
     end

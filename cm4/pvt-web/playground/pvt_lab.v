@@ -21,6 +21,11 @@
 //   nnn/xxx/wwwwww = droop monitor min/max/sum of tap position over 2^15
 //   rising launches (dmon.v), f = alarm flags (1 droop, 2 glitch, 4 over-temp).
 //   With the quiet window on, rN are the counts from the last heater-off gate.
+// Other TX lines (sent between status lines):
+//      G ff c0 c1 ... c63\r\n     die map frame ff: 64 x 6 hex counts, RO/2 edges
+//                                in 2^18 clk (f = 2*c*50e6/2^18); index row*8+col
+//      Q lll s0 ... s15\r\n       scope dump line lll (0..3FF): 16 x 4 hex samples,
+//                                16 * mean droop position
 // RX commands, one per line ('\n' ends it), hex arguments:
 //      Hdd        open loop, heater duty = dd (00 = off)
 //      Sirrrrrr   closed loop: hold RO i (0..4) at count rrrrrr
@@ -36,6 +41,9 @@
 //      Tss        droop monitor delay-line tap (0..3F)
 //      Lxxx/Uxxx  droop (pos < L) / glitch (pos > U) alarm thresholds
 //      C          clear droop, glitch and temperature alarms
+//      Od         scope: capture 16384 droop-monitor samples, each the mean of
+//                 2^d raw ones (25 MS/s / 2^d), then dump them as Q lines
+//      Yr         die map (8x8 ring grid) on (1, default) / off (0)
 //      K          keepalive (any valid command also feeds the watchdog)
 //
 // LEDs (active low): led[0] heartbeat, led[1] heater on, led[2] watchdog tripped.
@@ -67,9 +75,7 @@ module pvt_lab #(
     localparam NRO = 5;
     wire [24*NRO-1:0] ro_cnt;
     ro_monitor #(.LOC("SLICE_X0Y20"))    ro0 (.clk(clk), .en(!rst), .count(ro_cnt[ 0+:24]));
-    // playground: ro1 moved in from SLICE_X151Y20 (right-most column), where it
-    // read 300 MHz, then 0, depending on routing (see cm4/pvt-web/README.md).
-    ro_monitor #(.LOC("SLICE_X145Y20"))  ro1 (.clk(clk), .en(!rst), .count(ro_cnt[24+:24]));
+    ro_monitor #(.LOC("SLICE_X151Y20"))  ro1 (.clk(clk), .en(!rst), .count(ro_cnt[24+:24]));
     ro_monitor #(.LOC("SLICE_X80Y170"))  ro2 (.clk(clk), .en(!rst), .count(ro_cnt[48+:24]));
     ro_monitor #(.LOC("SLICE_X0Y320"))   ro3 (.clk(clk), .en(!rst), .count(ro_cnt[72+:24]));
     ro_monitor #(.LOC("SLICE_X145Y320")) ro4 (.clk(clk), .en(!rst), .count(ro_cnt[96+:24]));
@@ -151,12 +157,16 @@ module pvt_lab #(
     reg [8:0]  dlo    = 9'd0;
     reg [8:0]  dhi    = 9'h1FF;
     reg        aclr   = 1'b0;
+    reg        sc_arm = 1'b0;
+    reg [3:0]  sc_dec = 4'd0;
+    reg        grid_run = 1'b1;
     reg [26:0] wdog   = 27'd0;
     reg        cmd_ok = 1'b0;
 
     always @(posedge clk) begin
         cmd_ok <= 1'b0;
         aclr   <= 1'b0;
+        sc_arm <= 1'b0;
         if (rst) begin
             mode <= 2'd0; duty_o <= 8'd0; nd <= 5'd0; cmd <= 8'd0;
             gshift <= 4'd6; dmax <= 8'hC0; wdog <= 27'd0;
@@ -180,6 +190,8 @@ module pvt_lab #(
                         "L": begin dlo <= arg[8:0]; wdog <= 0; end
                         "U": begin dhi <= arg[8:0]; wdog <= 0; end
                         "C": begin aclr <= 1'b1; wdog <= 0; end
+                        "O": begin sc_arm <= 1'b1; sc_dec <= arg[3:0]; wdog <= 0; end
+                        "Y": begin grid_run <= arg[0]; wdog <= 0; end
                         "K": wdog <= 0;
                         default: ;
                     endcase
@@ -260,7 +272,24 @@ module pvt_lab #(
     wire        dm_lo, dm_hi;
     dmon #(.LOC("SLICE_X86Y200"), .NL(64), .NC(64), .WIN(15)) dmon_i (
         .clk(clk), .sel(dsel), .thr_lo(dlo), .thr_hi(dhi), .clr(aclr),
-        .wmin(dm_min), .wmax(dm_max), .wsum(dm_sum), .alarm_lo(dm_lo), .alarm_hi(dm_hi));
+        .wmin(dm_min), .wmax(dm_max), .wsum(dm_sum), .alarm_lo(dm_lo), .alarm_hi(dm_hi),
+        .pos_o(dm_pos), .vld_o(dm_vld));
+
+    // ---------------------------------------------------------------- scope + die map
+    wire [8:0]  dm_pos;
+    wire        dm_vld;
+    wire        sc_done, sc_busy;
+    wire [15:0] sc_rdata;
+    reg  [13:0] sc_raddr = 14'd0;
+    scope #(.AW(14)) scope_i (.clk(clk), .pos(dm_pos), .vld(dm_vld), .arm(sc_arm), .dec(sc_dec),
+        .done(sc_done), .busy(sc_busy), .raddr(sc_raddr), .rdata(sc_rdata));
+
+    wire [23:0] gr_cnt;
+    wire [7:0]  gr_frame;
+    wire        gr_stb;
+    wire [5:0]  gr_idx;
+    ro_grid #(.WIN(18)) grid_i (.clk(clk), .run(grid_run && !rst), .rd_idx(gr_idx), .rd_cnt(gr_cnt),
+        .frame(gr_frame), .frame_stb(gr_stb));
 
     // ---------------------------------------------------------------- heater
     // The heater banks run on their own gated clocks: HGROUPS BUFGCEs, each
@@ -269,13 +298,12 @@ module pvt_lab #(
     // start-up no longer sees the step of ~200k clocked FFs), and the groups'
     // PWM phases are staggered by 256/HGROUPS to smooth the supply current.
     //
-    // playground: the heater runs at HMHZ (100 MHz, from a PLL) instead of the
-    // 50 MHz system clock, for about twice the power. The PWM counter and the
-    // BUFGCE enables run in that clock domain; duty (quasi-static, changes at
-    // most every few ms) is brought across with a 2-FF synchroniser. Until the
-    // PLL locks the heater stays off.
-    // 5 groups (not 6): with the extra free-running 100 MHz BUFG, 6 groups
-    // ran a clock region out of global clock lines (nextpnr failed to route).
+    // playground: the heater runs at 100 MHz from a PLL instead of the 50 MHz
+    // system clock, for about twice the power. The PWM counter and the BUFGCE
+    // enables run in that clock domain; duty (quasi-static) crosses through a
+    // 2-FF synchroniser. Until the PLL locks the heater stays off. 5 groups
+    // (not 6): with the extra free-running PLL BUFG, 6 groups ran a clock
+    // region out of global clock lines.
     localparam HGROUPS = 5;
     wire hfb, hpll, hpll_locked, hclk_free;
     PLLE2_ADV #(
@@ -311,7 +339,10 @@ module pvt_lab #(
     end endgenerate
 
     // ---------------------------------------------------------------- UART TX
-    localparam MSG_LEN = 84;
+    // Three line types share the UART. Status lines go out every 2^24 clk; a
+    // die-map line after each grid frame; scope lines (one per 16 samples)
+    // after a capture, until all 1024 have gone. Status always wins.
+    localparam LEN_STAT = 84, LEN_GRID = 5 + 64*7 + 2, LEN_SCOPE = 6 + 16*5 + 2;
     reg [23:0] rate = 24'd0;
     reg [23:0] sr [0:NRO-1];
     reg [7:0]  sduty = 8'd0;
@@ -319,7 +350,9 @@ module pvt_lab #(
     reg [23:0] stdc = 24'd0, stro = 24'd0, sdsum = 24'd0;
     reg [8:0]  sdmin = 9'd0, sdmax = 9'd0;
     reg [2:0]  sflag = 3'd0;
-    reg [6:0]  idx = 7'd0;
+    reg [8:0]  idx = 9'd0;
+    reg [8:0]  len = 9'd0;
+    reg [1:0]  src = 2'd0;               // 0 status, 1 grid, 2 scope
     reg        busy = 1'b0;
     reg [9:0]  bdiv = 10'd0;
     reg [3:0]  bitn = 4'd0;
@@ -328,49 +361,101 @@ module pvt_lab #(
     assign tx = txr;
     assign cm4_tx = txr;
 
+    reg        stat_pend = 1'b0, grid_pend = 1'b0, dumping = 1'b0;
+    reg [7:0]  gframe = 8'd0;
+    reg [9:0]  ql = 10'd0;               // scope line number
+    reg [15:0] qb [0:15];                // scope line buffer
+    reg [4:0]  qf = 5'd0;                // fill counter
+    reg        qfill = 1'b0, qready = 1'b0;
+    integer j;
+
     function [7:0] hexc;
         input [3:0] n;
         hexc = (n < 4'd10) ? (8'h30 + n) : (8'h41 + n - 4'd10);
     endfunction
 
-    reg [7:0] ch;
-    integer   kk, pp;
+    reg [7:0] ch_s, ch_g, ch_q, ch;
+    integer   kk, pp, gk, gp, qk, qp;
     always @* begin
-        ch = 8'h20; kk = 0; pp = 0;
-        if (idx == 0) ch = "R";
+        ch_s = 8'h20; kk = 0; pp = 0;
+        if (idx == 0) ch_s = "R";
         else if (idx >= 2 && idx < 2 + NRO*7) begin
             kk = (idx - 2) / 7; pp = (idx - 2) % 7;
-            if (pp != 6) ch = hexc(sr[kk] >> (4 * (5 - pp)));
+            if (pp != 6) ch_s = hexc(sr[kk] >> (4 * (5 - pp)));
         end
-        else if (idx == 37) ch = "H";
-        else if (idx == 39) ch = hexc(sduty[7:4]);
-        else if (idx == 40) ch = hexc(sduty[3:0]);
-        else if (idx == 42) ch = "M";
-        else if (idx == 44) ch = hexc({2'b00, smode});
-        else if (idx == 46) ch = "D";
-        else if (idx >= 48 && idx < 54) ch = hexc(stdc >> (4 * (53 - idx)));
-        else if (idx >= 55 && idx < 61) ch = hexc(stro >> (4 * (60 - idx)));
-        else if (idx == 62) ch = "P";
-        else if (idx >= 64 && idx < 67) ch = hexc({3'b000, sdmin} >> (4 * (66 - idx)));
-        else if (idx >= 68 && idx < 71) ch = hexc({3'b000, sdmax} >> (4 * (70 - idx)));
-        else if (idx >= 72 && idx < 78) ch = hexc(sdsum >> (4 * (77 - idx)));
-        else if (idx == 79) ch = "A";
-        else if (idx == 81) ch = hexc({1'b0, sflag});
-        else if (idx == 82) ch = 8'h0D;
-        else if (idx == 83) ch = 8'h0A;
-    end
+        else if (idx == 37) ch_s = "H";
+        else if (idx == 39) ch_s = hexc(sduty[7:4]);
+        else if (idx == 40) ch_s = hexc(sduty[3:0]);
+        else if (idx == 42) ch_s = "M";
+        else if (idx == 44) ch_s = hexc({2'b00, smode});
+        else if (idx == 46) ch_s = "D";
+        else if (idx >= 48 && idx < 54) ch_s = hexc(stdc >> (4 * (53 - idx)));
+        else if (idx >= 55 && idx < 61) ch_s = hexc(stro >> (4 * (60 - idx)));
+        else if (idx == 62) ch_s = "P";
+        else if (idx >= 64 && idx < 67) ch_s = hexc({3'b000, sdmin} >> (4 * (66 - idx)));
+        else if (idx >= 68 && idx < 71) ch_s = hexc({3'b000, sdmax} >> (4 * (70 - idx)));
+        else if (idx >= 72 && idx < 78) ch_s = hexc(sdsum >> (4 * (77 - idx)));
+        else if (idx == 79) ch_s = "A";
+        else if (idx == 81) ch_s = hexc({1'b0, sflag});
+        else if (idx == 82) ch_s = 8'h0D;
+        else if (idx == 83) ch_s = 8'h0A;
 
-    integer j;
+        ch_g = 8'h20; gk = 0; gp = 0;
+        if (idx == 0) ch_g = "G";
+        else if (idx == 2) ch_g = hexc(gframe[7:4]);
+        else if (idx == 3) ch_g = hexc(gframe[3:0]);
+        else if (idx >= 5 && idx < 5 + 64*7) begin
+            gk = (idx - 5) / 7; gp = (idx - 5) % 7;
+            if (gp != 6) ch_g = hexc(gr_cnt >> (4 * (5 - gp)));
+        end
+        else if (idx == LEN_GRID - 2) ch_g = 8'h0D;
+        else if (idx == LEN_GRID - 1) ch_g = 8'h0A;
+
+        ch_q = 8'h20; qk = 0; qp = 0;
+        if (idx == 0) ch_q = "Q";
+        else if (idx >= 2 && idx < 5) ch_q = hexc({2'b00, ql} >> (4 * (4 - idx)));
+        else if (idx >= 6 && idx < 6 + 16*5) begin
+            qk = (idx - 6) / 5; qp = (idx - 6) % 5;
+            if (qp != 4) ch_q = hexc(qb[qk] >> (4 * (3 - qp)));
+        end
+        else if (idx == LEN_SCOPE - 2) ch_q = 8'h0D;
+        else if (idx == LEN_SCOPE - 1) ch_q = 8'h0A;
+
+        ch = (src == 2'd0) ? ch_s : (src == 2'd1) ? ch_g : ch_q;
+    end
+    assign gr_idx = gk[5:0];
+
     always @(posedge clk) begin
         rate <= rate + 1'b1;
+        if (&rate) stat_pend <= 1'b1;
+        if (gr_stb) begin gframe <= gr_frame; grid_pend <= 1'b1; end
+        if (sc_arm) begin dumping <= 1'b1; ql <= 10'd0; qready <= 1'b0; qfill <= 1'b0; end
+
+        // scope line buffer fill: 16 reads, 1-cycle BRAM latency
+        if (dumping && sc_done && !qready && !qfill && !(busy && src == 2'd2)) begin
+            qfill <= 1'b1; qf <= 5'd0; sc_raddr <= {ql, 4'd0};
+        end else if (qfill) begin
+            sc_raddr <= sc_raddr + 1'b1;
+            if (qf != 5'd0) qb[qf - 1] <= sc_rdata;
+            if (qf == 5'd16) begin qfill <= 1'b0; qready <= 1'b1; end
+            qf <= qf + 1'b1;
+        end
+
         if (rst) begin
-            busy <= 1'b0; txr <= 1'b1; bitn <= 4'd0;
+            busy <= 1'b0; txr <= 1'b1; bitn <= 4'd0; stat_pend <= 1'b0; grid_pend <= 1'b0; dumping <= 1'b0;
         end else if (!busy) begin
-            if (&rate) begin
+            if (stat_pend) begin
                 for (j = 0; j < NRO; j = j + 1) sr[j] <= qcnt[24*j +: 24];
                 sduty <= duty_req; smode <= mode; stdc <= tdc_sum; stro <= tdc_ro_cnt;
                 sdmin <= dm_min; sdmax <= dm_max; sdsum <= dm_sum; sflag <= {talarm, dm_hi, dm_lo};
-                idx <= 7'd0; busy <= 1'b1; bitn <= 4'd0;
+                stat_pend <= 1'b0; src <= 2'd0; len <= LEN_STAT;
+                idx <= 9'd0; busy <= 1'b1; bitn <= 4'd0;
+            end else if (grid_pend) begin
+                grid_pend <= 1'b0; src <= 2'd1; len <= LEN_GRID;
+                idx <= 9'd0; busy <= 1'b1; bitn <= 4'd0;
+            end else if (dumping && qready) begin
+                src <= 2'd2; len <= LEN_SCOPE;
+                idx <= 9'd0; busy <= 1'b1; bitn <= 4'd0;
             end
         end else if (bitn == 4'd0) begin
             shreg <= {1'b1, ch, 1'b0};
@@ -381,8 +466,13 @@ module pvt_lab #(
             shreg <= {1'b1, shreg[9:1]};
             bitn  <= bitn - 1'b1;
             if (bitn == 4'd1) begin
-                if (idx == MSG_LEN - 1) busy <= 1'b0;
-                else idx <= idx + 1'b1;
+                if (idx == len - 1) begin
+                    busy <= 1'b0;
+                    if (src == 2'd2) begin
+                        qready <= 1'b0;
+                        if (&ql) dumping <= 1'b0; else ql <= ql + 1'b1;
+                    end
+                end else idx <= idx + 1'b1;
             end
         end else
             bdiv <= bdiv + 1'b1;

@@ -8,7 +8,9 @@ ADDITIONAL_SOURCES = ddr3_top.v ddr3_controller.v ddr3_phy.v uart.v uart_rx.v ua
 # make CAL_DEBUG=1: JP5 TX prints the controller's read-calibration steps
 # (9600 8N1) instead of serving the UART bridge. Rebuild after switching.
 CAL_DEBUG ?= 0
-$(shell printf '%s\n' $(if $(filter 1,$(CAL_DEBUG)),'`define UART_DEBUG_READ_LEVEL','// normal build (make CAL_DEBUG=1 for the calibration log)') > build_config.vh.new; cmp -s build_config.vh.new build_config.vh || mv build_config.vh.new build_config.vh; rm -f build_config.vh.new)
+# make CLKB_SAME=1: ISERDES CLKB driven by the same clock as CLK (see ddr3_phy.v)
+CLKB_SAME ?= 0
+$(shell printf '%s\n' $(if $(filter 1,$(CAL_DEBUG)),'`define UART_DEBUG_READ_LEVEL','// normal build (make CAL_DEBUG=1 for the calibration log)') $(if $(filter 1,$(CLKB_SAME)),'`define QMTECH_CLKB_SAME') > build_config.vh.new; cmp -s build_config.vh.new build_config.vh || mv build_config.vh.new build_config.vh; rm -f build_config.vh.new)
 
 # DDR3 IO (HP bank 34) needs bits that only exist in prjxray-db after 3bd17eb
 # (pinned 7a36171 lacks them). A git worktree of openXC7/prjxray-db at 0c3504f:

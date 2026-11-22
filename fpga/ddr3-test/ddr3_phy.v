@@ -1,3 +1,4 @@
+`include "build_config.vh"   // QMTech build options (Makefile)
 ////////////////////////////////////////////////////////////////////////////////
 //
 // Filename: ddr3_phy.v
@@ -112,6 +113,15 @@ module ddr3_phy #(
     // slots (CS#=1 but RAS#/CAS#/WE# still carrying the slot's ACT/RD/WR
     // opcode) would execute as real commands -- the DRAM never initialized.
     // Make every deselected slot a NOP. Harmless where CS# is wired.
+    // QMTech: ISERDES CLKB source. Default: the PLL 180-degree clock (what a
+    // fabric !i_ddr3_clk becomes). With `make CLKB_SAME=1`, CLKB is the same
+    // clock as CLK: tests whether the 7-series ILOGIC inverts CLKB internally
+    // (prjxray has no CLKB inversion feature; Vivado always ties CLKB = ~CLK).
+`ifdef QMTECH_CLKB_SAME
+    wire iserdes_clkb = i_ddr3_clk;
+`else
+    wire iserdes_clkb = i_ddr3_clk_180;
+`endif
     // QMTech debug: IDELAY tap read-back
     wire[(DQ_BITS*LANES)*5-1:0] dbg_idelay_dq_cnt;
     assign o_dbg_idelay_dq0_cnt = dbg_idelay_dq_cnt[4:0];
@@ -820,7 +830,7 @@ module ddr3_phy #(
                 .CLKDIVP(), // 1-bit input: TBD
                 // Clocks: 1-bit (each) input: ISERDESE2 clock input ports
                 .CLK(i_ddr3_clk), // 1-bit input: High-speed clock
-                .CLKB(i_ddr3_clk_180), // 1-bit input: High-speed secondary clock
+                .CLKB(iserdes_clkb), // 1-bit input: High-speed secondary clock
                 .CLKDIV(i_controller_clk), // 1-bit input: Divided clock
                 .OCLK(), // 1-bit input: High speed output clock used when INTERFACE_TYPE="MEMORY"
                 // Dynamic Clock Inversions: 1-bit (each) input: Dynamic clock inversion pins to switch clock polarity
@@ -1314,7 +1324,7 @@ module ddr3_phy #(
                 .CLKDIVP(), // 1-bit input: TBD
                 // Clocks: 1-bit (each) input: ISERDESE2 clock input ports
                 .CLK(i_ddr3_clk), // 1-bit input: High-speed clock
-                .CLKB(i_ddr3_clk_180), // 1-bit input: High-speed secondary clock
+                .CLKB(iserdes_clkb), // 1-bit input: High-speed secondary clock
                 .CLKDIV(i_controller_clk), // 1-bit input: Divided clock
                 .OCLK(), // 1-bit input: High speed output clock used when INTERFACE_TYPE="MEMORY"
                 // Dynamic Clock Inversions: 1-bit (each) input: Dynamic clock inversion pins to switch clock polarity
@@ -1409,7 +1419,7 @@ module ddr3_phy #(
                     .CLKDIVP(), // 1-bit input: TBD
                     // Clocks: 1-bit (each) input: ISERDESE2 clock input ports
                     .CLK(i_ddr3_clk), // 1-bit input: High-speed clock
-                    .CLKB(i_ddr3_clk_180), // 1-bit input: High-speed secondary clock
+                    .CLKB(iserdes_clkb), // 1-bit input: High-speed secondary clock
                     .CLKDIV(i_controller_clk), // 1-bit input: Divided clock
                     .OCLK(), // 1-bit input: High speed output clock used when INTERFACE_TYPE="MEMORY"
                     // Dynamic Clock Inversions: 1-bit (each) input: Dynamic clock inversion pins to switch clock polarity

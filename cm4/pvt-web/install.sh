@@ -40,7 +40,7 @@ if [ -f "$NEWBIT" ] && ! cmp -s "$NEWBIT" "$OLDBIT"; then
     # new placement = new RO frequencies: restart the self-calibration from now
     install -d -o pvtd -g pvtd /var/lib/pvtd 2>/dev/null || install -d /var/lib/pvtd
     date +%s > /var/lib/pvtd/calib_epoch
-    rm -f /var/lib/pvtd/calib_auto.json
+    rm -f /var/lib/pvtd/calib_auto.json /var/lib/pvtd/calib_grid.json
     echo "new playground.bit: RO calibration restarts (flash it, e.g. pvtd reloads it if the FPGA is silent)"
 fi
 # Ring-oscillator calibration: pvtd fits its own against the XADC
