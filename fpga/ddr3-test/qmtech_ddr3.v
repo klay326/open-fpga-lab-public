@@ -78,6 +78,11 @@ module qmtech_ddr3 (
     wire       o_wb_ack, o_wb_stall, o_aux;
     wire [7:0] o_wb_data;
     wire [63:0] o_debug1;
+    wire [31:0] o_debug2, o_debug3;
+    wire        calib_complete;
+    reg  [63:0] rd_snap = 0;      // read_lane_data at first entry to state 14 since '#'
+    reg         rd_snap_valid = 0;
+    reg  [2:0]  rd_ptr = 0;       // '[' -> next snapshot byte (LSB first), ']' -> rewind
     reg        i_wb_stb = 0, i_wb_we = 0;
     reg  [7:0] i_wb_data = 0, i_wb_addr = 0;
     // '?' -> reply '@' + calibration state (0..23; 'W' = DONE_CALIBRATE)
@@ -88,7 +93,10 @@ module qmtech_ddr3 (
     reg        dbg_valid = 0;
     reg  [7:0] dbg_data = 0;
     reg [15:0] dqs_or = 0, dqs_and = 16'hffff;
-    reg  [3:0] pad_clr_cnt = 0;   // stretches '#' so the 200 MHz domain sees it
+    reg  [3:0] pad_clr_cnt = 0;
+    reg  [4:0] max_state = 0;     // '!' -> highest calibration state reached since '#'
+    reg [15:0] n_restart = 0;     // '$' -> number of 0-after-nonzero transitions (low byte)
+    reg  [4:0] prev_state = 0;   // stretches '#' so the 200 MHz domain sees it
     wire       pad_clr = |pad_clr_cnt;
     wire [15:0] dqs_now = o_debug1[31:16];
 
@@ -99,11 +107,25 @@ module qmtech_ddr3 (
         i_wb_data <= 0;
         dbg_valid <= 0;
         if (pad_clr_cnt != 0) pad_clr_cnt <= pad_clr_cnt - 1'b1;
+        prev_state <= o_debug1[4:0];
+        if (o_debug1[4:0] > max_state) max_state <= o_debug1[4:0];
+        if (o_debug1[4:0] == 5'd14 && prev_state != 5'd14 && !rd_snap_valid) begin
+            rd_snap <= {o_debug2, o_debug3}; rd_snap_valid <= 1;
+        end
+        if (o_debug1[4:0] == 0 && prev_state != 0) n_restart <= n_restart + 1'b1;
         dqs_or  <= dqs_or  | dqs_now;
         dqs_and <= dqs_and & dqs_now;
         if (m_axis_tvalid && rd_data == 8'h3F) begin                // '?': status
             dbg_valid <= 1;
             dbg_data  <= 8'h40 + {3'b000, o_debug1[4:0]};
+        end else if (m_axis_tvalid && rd_data == 8'h5B) begin       // '['
+            dbg_valid <= 1; dbg_data <= rd_snap[8*rd_ptr +: 8]; rd_ptr <= rd_ptr + 1'b1;
+        end else if (m_axis_tvalid && rd_data == 8'h5D) begin       // ']'
+            dbg_valid <= 1; dbg_data <= {7'd0, rd_snap_valid}; rd_ptr <= 0;
+        end else if (m_axis_tvalid && rd_data == 8'h21) begin       // '!'
+            dbg_valid <= 1; dbg_data <= 8'h40 + {3'd0, max_state};
+        end else if (m_axis_tvalid && rd_data == 8'h24) begin       // '$'
+            dbg_valid <= 1; dbg_data <= n_restart[7:0];
         end else if (m_axis_tvalid && rd_data >= 8'h39 && rd_data <= 8'h3E) begin
             dbg_valid <= 1;
             case (rd_data)
@@ -130,6 +152,7 @@ module qmtech_ddr3 (
             endcase
         end else if (m_axis_tvalid && rd_data == 8'h23) begin       // '#': clear
             pad_clr_cnt <= 4'hf;
+            max_state <= 0; n_restart <= 0; rd_snap_valid <= 0;
             dqs_or  <= 0;
             dqs_and <= 16'hffff;
         end else if (!o_wb_stall && m_axis_tvalid) begin
@@ -199,13 +222,15 @@ module qmtech_ddr3 (
 
     // ---------------- DDR3 controller ----------------
     ddr3_top #(
-        .ROW_BITS(14), .COL_BITS(10), .BA_BITS(3),
-        .DQ_BITS(8), .LANES(2),
-        .CONTROLLER_CLK_PERIOD(12), .DDR3_CLK_PERIOD(3),
-        .ODELAY_SUPPORTED(0),     // HP bank has ODELAYE2, but prjxray-db has no feature routing its output back to the pad, so use the 90-deg-clock scheme
+        .CONTROLLER_CLK_PERIOD(12_000), .DDR3_CLK_PERIOD(3_000),   // ps: 83.33 / 333.33 MHz (DDR3-667)
+        .ROW_BITS(14), .COL_BITS(10), .BA_BITS(3), .BYTE_LANES(2),
         .AUX_WIDTH(16), .WB2_ADDR_BITS(32), .WB2_DATA_BITS(32),
-        .OPT_LOWPOWER(1), .OPT_BUS_ABORT(1),
-        .MICRON_SIM(0), .TEST_DATAMASK(1)
+        .SPEED_BIN(2),            // MT41K128M16JT-15E: DDR3-1333 (9-9-9) timings
+        .SDRAM_CAPACITY(3),       // 2 Gb
+        .MICRON_SIM(0),
+        .ODELAY_SUPPORTED(0),     // HP bank has ODELAYE2, but prjxray-db has no feature routing its output back to the pad, so use the 90-deg-clock scheme
+        .SECOND_WISHBONE(0),
+        .BIST_MODE(1)             // calibration includes one full-memory write/read BIST
     ) ddr3_top (
         .i_controller_clk(i_controller_clk), .i_ddr3_clk(i_ddr3_clk),
         .i_ref_clk(i_ref_clk), .i_ddr3_clk_90(i_ddr3_clk_90), .i_ddr3_clk_180(i_ddr3_clk_180),
@@ -213,7 +238,7 @@ module qmtech_ddr3 (
         .i_wb_cyc(1'b1), .i_wb_stb(i_wb_stb), .i_wb_we(i_wb_we),
         .i_wb_addr(i_wb_addr), .i_wb_data(i_wb_data), .i_wb_sel(16'hffff),
         .i_aux(i_wb_we),
-        .o_wb_stall(o_wb_stall), .o_wb_ack(o_wb_ack), .o_wb_data(o_wb_data), .o_aux(o_aux),
+        .o_wb_stall(o_wb_stall), .o_wb_ack(o_wb_ack), .o_wb_err(), .o_wb_data(o_wb_data), .o_aux(o_aux),
         .i_wb2_cyc(1'b0), .i_wb2_stb(1'b0), .i_wb2_we(1'b0), .i_wb2_addr(32'd0),
         .i_wb2_data(32'd0), .i_wb2_sel(4'd0),
         .o_wb2_stall(), .o_wb2_ack(), .o_wb2_data(),
@@ -224,13 +249,17 @@ module qmtech_ddr3 (
         .o_ddr3_addr(o_addr), .o_ddr3_ba_addr(o_ba),
         .io_ddr3_dq(ddr3_dq), .io_ddr3_dqs(ddr3_dqs_p), .io_ddr3_dqs_n(ddr3_dqs_n),
         .o_ddr3_dm(ddr3_dm), .o_ddr3_odt(o_odt),
-        .o_debug1(o_debug1)
+        .o_calib_complete(calib_complete),
+        .o_debug1(o_debug1),
+        .i_user_self_refresh(1'b0),
+        .uart_tx()
     );
+    assign o_debug2 = 32'd0, o_debug3 = 32'd0;   // upstream controller has no debug2/3
 
     // ---------------- status LEDs (active-low) ----------------
     reg [25:0] hb = 0;
     always @(posedge i_controller_clk) hb <= hb + 1'b1;
-    wire calibrated = (o_debug1[4:0] == 5'd23);
+    wire calibrated = calib_complete;
     assign led_n[0] = ~pll_locked;     // D2 / R26
     assign led_n[1] = ~calibrated;     // D3 / P26
     assign led_n[2] = ~hb[25];         // D7 / N26

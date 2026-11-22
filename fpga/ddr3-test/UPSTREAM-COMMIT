@@ -1,1 +1,3 @@
-a53f2b352a98448e560cc890541992a4f6217b31 2026-11-21
+UberDDR3 rtl/{ddr3_top,ddr3_controller,ddr3_phy}.v from https://github.com/AngeloJacobo/UberDDR3 at 79d8fd3 (2026-11-22),
+plus QMTech patches marked "QMTech:" (CS# deselect -> NOP, i_ddr3_clk_180, CK via OSERDES + pad probe, DQS samples in o_debug1).
+Previously: openXC7 demo-projects copy a53f2b3 (older UberDDR3; failed write calibration).

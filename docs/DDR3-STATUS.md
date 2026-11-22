@@ -184,6 +184,39 @@ Findings so far:
   timing model is pessimistic (LiteX ran fine at 100 MHz with an "84 MHz"
   report), but probably not by 30%.
 
+### Root causes found and fixed (2026-11-22, later)
+
+1. **CS# is tied low on this board, and the controller relies on CS#.**
+   UberDDR3 fills each 4:1 command slot with that slot's opcode (ACT, RD,
+   WR) and deselects the unused ones with CS#=1. With CS# grounded, the
+   DRAM executed every dummy ACT/RD/WR, including during init, so it was
+   never initialized. Found in simulation (`sim/`, Micron model): "ACT during
+   init" right after CKE. Fix (`ddr3_phy.v`, `cmd_gated`): a deselected
+   slot becomes a NOP. After that, the board's DRAM drives DQS on MPR reads
+   for the first time.
+2. **The vendored controller was old.** openXC7's demo copy failed write
+   calibration in simulation too, on every attempt. Current upstream
+   (79d8fd3) passes upstream's own Icarus test at exactly this config (12/3
+   ns, no ODELAY, x16). `fpga/ddr3-test` now uses upstream RTL plus our
+   patches, and `sim/run.sh` reaches **DONE_CALIBRATE** with CS# tied low as
+   on the board. It also passes nextpnr timing (101 MHz vs 83.33).
+   (Testbench gotcha: clocks must start so that ddr_clk rises with ctrl_clk.
+   My first testbench had CLKDIV 180 degrees off CLK, which faked a
+   one-cycle write offset.)
+3. **JTAG got marginal after the USB replug.** At 12 MHz, and even at 3 MHz
+   for this design, configuration ends `done 0` with no CRC error, because
+   prjxray bitstreams carry no CRC. At 1.5 MHz it's `done 1`
+   (`make program JTAG_FREQ=1500000`, ~2 min). Re-seat the cable and ribbon
+   before trusting 12 MHz again.
+
+Hardware status with upstream RTL: the first attempt reaches state 14
+(write-calibration check), restarts once, then loops in read DQS
+calibration (states 2-5). DQS toggles on reads (sticky OR 0xff, AND 0x00).
+Next: find out why read calibration doesn't lock on the board when it does
+in simulation (board flight time vs IDELAY sweep range; try SPEED_BIN 3
+and a different read-delay start; log `dqs_start_index` / idelay taps over
+the UART).
+
 ### Pad read-back probes (2026-11-22)
 
 With no scope available, the control, address and bank outputs (and CK)
