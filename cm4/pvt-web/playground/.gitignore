@@ -1,0 +1,5 @@
+*.json
+*.fasm
+*.frames
+*.log
+*.bit

@@ -1,51 +1,83 @@
-# pvt-web: live FPGA die monitor on fpga.klayshomelab.com
+# pvt-web: the FPGA playground on fpga.klayshomelab.com
 
-The CM4 next to the Kintex-7 samples the FPGA's die temperature, supply
-voltages and ring-oscillator speeds, stores them, and serves a read-only page
-that the homelab's Cloudflare tunnel publishes at
-**https://fpga.klayshomelab.com**.
+A public, interactive page for the Kintex-7 on the QMTech board. Anyone can
+heat the die, hold a temperature, move the droop-monitor tap, run or stop the
+TRNG and roll dice from it, and everyone sees the same board live. The CM4
+next to the FPGA runs the daemon (`pvtd`), the safety limits and the page.
 
 ```
-FPGA ring oscillators --UART A15->GPIO15--> /dev/serial0 --.
-FPGA XADC ------------JTAG (XPCU cable on CM4 USB)---------+--> pvtd (CM4 :8090)
-                                                                 |  SQLite, 30 days
-                                    homelab-host cloudflared tunnel <--'
-                                                 |
-                                    https://fpga.klayshomelab.com
+                 FPGA (playground.bit)                       CM4 (pvtd :8090)
+ pvt_lab: ROs, heater, hold loop, TDC, droop ---UART0 115200--- /dev/serial0
+     A15 -> GPIO15 (RXD0), C17 <- GPIO14 (TXD0)
+ trng: 16 rings + SP 800-90B health tests  ----UART3 1 Mbaud--- /dev/ttyAMA3
+     C11 -> GPIO5 (RXD3), E18 <- GPIO4 (TXD3)
+ XADC (temp, VCCINT, VCCAUX)               ----JTAG (XPCU cable on CM4 USB)
+                                                                  |
+              homelab-host cloudflared tunnel  <--------------'
+                         https://fpga.klayshomelab.com
 ```
 
-## Data sources
+## FPGA design (`playground/`)
 
-| Source | What | Needs |
-|---|---|---|
-| UART `/dev/serial0` (115200) | 5 ring-oscillator frequencies; with pvt-lab also heater duty, loop mode, alarm flags | A bitstream that drives FPGA ball A15 (CM4 GPIO15): `fpga/pvt_web.bit` here, or `fpga/pvt-lab` (it has a `cm4_tx` port) |
-| XADC over JTAG | Die temperature, VCCINT, VCCAUX (authoritative) | The XPCU cable plugged into the CM4's USB. `openFPGALoader --read-xadc` every 10 s; it does not reset the FPGA |
-| RO thermometer | Temperature estimate from ro2 when no XADC reading is fresh | `/etc/pvtd/calib.json` from `fpga/pvt-lab/pvt_lab.py sweep`; only applied to pvt-lab-format lines, because the calibration holds only for that exact bitstream |
+`playground.v` instantiates two existing blocks unmodified, each on its own
+CM4 UART:
 
-The XADC is only reachable over JTAG in openXC7 (fabric DRP access does not
-work, see `fpga/xadc-monitor/README.md`). While the cable is on the CM4 the Mac
-cannot flash the board; move it back (or flash from the CM4 with
-`/usr/local/bin/openFPGALoader`) when needed. pvtd just shows "no XADC" while
-the cable is elsewhere.
+- `pvt_lab` -- frozen copies of `fpga/pvt-lab` v4 (`pvt_lab.v`, `ro_monitor.v`,
+  `tdc.v`, `dmon.v`), so later pvt-lab work can't move this design's ring
+  oscillators. Its RX is the AND of JP5 (Mac) and C17 (CM4); only one host
+  should talk at a time.
+- `trng` -- `fpga/trng/trng.v` in place.
 
-## Files
+```bash
+source ~/opt/openxc7/export.sh
+cd cm4/pvt-web/playground && make && make program JTAG_FREQ=1500000
+```
 
-- `pvtd.py` -- the daemon. Python 3 stdlib only (termios serial, sqlite3,
-  http.server). GET-only: `/`, `/api/now`, `/api/history?h=24` (max 720 h),
-  `/healthz`; everything else is 404/405. No JTAG, shell or write path is
-  reachable over HTTP.
-- `web/index.html` -- the page: live temperature, supplies, 1 h/24 h/7 d/30 d
-  chart, ring oscillators by die location.
-- `pvtd.service` -- systemd unit, runs as the unprivileged `pvtd` user
-  (dialout + plugdev), `ProtectSystem=strict`, only `/var/lib/pvtd` writable.
-- `60-xpcu.rules` -- udev rule giving plugdev the cable (03fd:0013/0008).
-- `install.sh` -- builds openFPGALoader 2aafd90 + the XPCU fix
-  (`tools/openfpgaloader/xpcu-detect-preloaded-firmware.patch`, upstream PR
-  #772) into `/usr/local/bin`, installs the firmware hex, udev rule, user,
-  pvtd and the unit. The openFPGALoader build takes ~25 min on the CM4.
-- `fpga/` -- `pvt_web.v`: `fpga/xadc-monitor` with its UART TX mirrored onto
-  A15 for the CM4. `make program JTAG_FREQ=1500000` after
-  `source ~/opt/openxc7/export.sh`.
+`fpga/` holds the earlier read-only design (xadc-monitor stream mirrored to
+A15). It's no longer needed.
+
+## pvtd (`pvtd.py`, Python 3 stdlib only)
+
+- Reads the pvt_lab line (ROs, heater duty/mode, TDC, droop min/avg/max,
+  alarm flags), the TRNG byte stream (rate, P(1), 90B MCV min-entropy,
+  Shannon entropy, lag-1 autocorrelation, longest run, a 16 kbit bitmap) and
+  the XADC over JTAG every 5 s.
+- **Self-calibrates the ring oscillators**: every 10 min it fits
+  `f_k = a + b*T + c*(VCCINT-1)` for each RO against the XADC over the last
+  7 days of stored samples, once those span >= 8 C. The result is
+  `/var/lib/pvtd/calib_auto.json`, and the best-fitting RO becomes the hold
+  loop's thermometer. So heating the die is also what calibrates it.
+- **Reloads the bitstream** (`/usr/local/share/pvtd/playground.bit`) over JTAG
+  if the FPGA sends nothing for 90 s (power cycle), at most every 15 min.
+- History: SQLite `/var/lib/pvtd/pvt.db`, a sample every 10 s, kept 30 days.
+
+### HTTP API
+
+| | |
+|---|---|
+| `GET /` | the page (`web/index.html`) |
+| `GET /api/now` | everything live |
+| `GET /api/history?h=24` | downsampled history (max 720 h) |
+| `GET /api/trng/random` | 32 bytes: SHA-256 over the raw bits received since the last call |
+| `POST /api/control` | `{"action": ...}`: `heater {duty 0-255}`, `hold {temp_c 30-60}`, `off`, `quiet {on}`, `clear`, `droop {tap 0-63}`, `trng {run}`, `trng_rate {div 0-9}`, `trng_clear` |
+
+The control API is public on purpose (the user's choice). What limits it:
+
+- Strict validation; JSON bodies only, max 1 KB.
+- Rate limits: 20 changes/min per visitor (by Cf-Connecting-Ip, kept in
+  memory only) and 80/min overall.
+- There is no path from HTTP to JTAG, files or a shell.
+- The heater is refused unless there is a trusted temperature (XADC, or a
+  good RO fit). It turns off at `--tmax` 72 C and stays locked until 62 C.
+- Hold setpoints are capped at 60 C (full heater plateaus near 63 C in open air).
+- Every heater/hold session ends after 10 min (`--lease`).
+- The pvt_lab watchdog drops the heater 2.7 s after pvtd stops sending
+  keepalives.
+- pvtd arms the FPGA's own over-temperature alarm at tmax + 3 C on the
+  thermometer RO, which latches the heater off in hardware.
+
+The activity log shows who changed what as "visitor (CC)" (Cloudflare country
+code only).
 
 ## Install / update on the CM4
 
@@ -54,32 +86,38 @@ From the Mac (the CM4 has no repo checkout):
 ```bash
 cd ~/projects/qmtech-k7-riscv-computer
 rsync -aR -e "ssh -i ~/.ssh/qmtech_cm4" cm4/pvt-web tools/openfpgaloader handoff/cable/xusb_hex/xusb_xp2.hex kladams@qmtech-cm4.local:qmtech-repo/
-ssh -i ~/.ssh/qmtech_cm4 kladams@qmtech-cm4.local 'cd qmtech-repo/cm4/pvt-web && sudo ./install.sh'
+ssh -i ~/.ssh/qmtech_cm4 kladams@qmtech-cm4.local 'cd qmtech-repo/cm4/pvt-web && sudo SKIP_OFL=1 ./install.sh'
 ```
 
-`sudo SKIP_OFL=1 ./install.sh` skips the openFPGALoader build (page/daemon
-updates only). To use a pvt-lab calibration:
-`scp fpga/pvt-lab/calib.json` to the CM4 and `sudo install -m644 calib.json /etc/pvtd/calib.json && sudo systemctl restart pvtd`.
+Without `SKIP_OFL=1` it also builds openFPGALoader 2aafd90 with the XPCU
+fix (`tools/openfpgaloader/xpcu-detect-preloaded-firmware.patch`, upstream PR
+#772). That takes about 25 min on the CM4. The installer also sets up the udev
+rule (`60-xpcu.rules`), the firmware hex, the `pvtd` user (dialout, plugdev),
+`dtoverlay=uart3` (a reboot is needed the first time) and the hardened unit
+(`pvtd.service`: `ProtectSystem=strict`, only `/var/lib/pvtd` writable).
 
-Logs: `journalctl -u pvtd -f`. LAN check: `curl http://10.0.0.144:8090/api/now`.
+Logs: `journalctl -u pvtd -f`. LAN: `curl http://10.0.0.144:8090/api/now`.
 
 ## CM4 prerequisites (done 2026-11-22)
 
-- `/dev/serial0` = PL011 on GPIO14/15: `enable_uart=1`, `dtoverlay=disable-bt`,
-  no serial console (see `../README.md`).
+- `/boot/firmware/config.txt`: `enable_uart=1`, `dtoverlay=disable-bt`,
+  `dtoverlay=uart3`; no serial console (see `../README.md`).
 - DHCP reservation qmtech-cm4 `2c:cf:67:8a:e1:16` -> 10.0.0.144 (UniFi).
+- The XPCU JTAG cable on the CM4's USB, for the XADC, self-calibration and
+  reloads. While it is there the Mac can't flash the board; flash from the CM4
+  with `/usr/local/bin/openFPGALoader -c xilinxPlatformCableUsb --probe-firmware /usr/local/share/pvtd/xusb_xp2.hex ...`
+  (stop pvtd first so the XADC reads don't collide).
 
 ## Publishing
 
-Same pattern as the homelab's other public read-only pages:
-
 - Route in `/etc/cloudflared/config.yml` on homelab-host (tunnel
   `94765154-...`): `fpga.klayshomelab.com -> http://10.0.0.144:8090`
-  (backup `config.yml.bak-fpga`), then `systemctl restart cloudflared`.
-- Proxied CNAME `fpga.klayshomelab.com -> <tunnel>.cfargotunnel.com`.
-- No Cloudflare Access app on purpose: the page is public and read-only.
-- Registered in Command Center (SERVICES row + `cc-versions.py` spec) and as a
-  Homarr tile.
+  (backup `config.yml.bak-fpga`).
+- Proxied CNAME to `<tunnel>.cfargotunnel.com`.
+- No Cloudflare Access, on purpose.
+- Registered in Command Center (SERVICES row + `cc-versions.py` spec) and as
+  a Homarr tile.
 
-To take it down: remove the route + restart the tunnel, delete the CNAME, the
-Command Center row/spec and the Homarr tile, then `sudo systemctl disable --now pvtd`.
+To take it down: remove the route and restart `cloudflared`, delete
+the CNAME, the Command Center row/spec and the Homarr tile, then run
+`sudo systemctl disable --now pvtd`.

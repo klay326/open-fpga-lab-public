@@ -1,27 +1,37 @@
 #!/usr/bin/env python3
-"""pvtd -- FPGA die-temperature sampler and read-only web page, run on the CM4.
+"""pvtd -- the FPGA playground daemon behind fpga.klayshomelab.com (runs on the CM4).
 
-Two sources, each optional:
-  * UART  /dev/serial0 (CM4 GPIO14/15 <-> FPGA C17/A15), the ring-oscillator
-    line any of these bitstreams send at 115200 every ~0.34 s:
-        R r0 r1 r2 r3 r4                         cm4/pvt-web/fpga, xadc-monitor
-        R r0 r1 r2 r3 r4 H dd M m D .. .. P .. .. .. A f   fpga/pvt-lab
-    f_RO = 2 * rN * 50e6 / 2^20.
-  * XADC  over JTAG: `openFPGALoader --read-xadc` with the XPCU cable on the
-    CM4's USB. Die temperature, VCCINT, VCCAUX. Does not reset the FPGA.
+Sources (each optional, the page shows what is there):
+  * pvt_lab on CM4 UART0 /dev/serial0, 115200 (FPGA A15 -> GPIO15, GPIO14 -> C17):
+        R r0..r4 [H dd M m D ssssss ffffff P nnn xxx wwwwww A f]
+    ring oscillators (f = 2*rN*50e6/2^20; with pvt-lab these are heater-off
+    "quiet" counts), heater duty/mode, TDC, droop monitor, alarm flags.
+    Commands go back on the same UART (see fpga/pvt-lab/pvt_lab.v).
+  * trng on CM4 UART3 /dev/ttyAMA3, 1 Mbaud binary (FPGA C11 -> GPIO5, GPIO4 -> E18):
+    raw ring-oscillator bits; single-byte commands 0-9 rate, S stop, G go, C clear.
+  * XADC over JTAG: `openFPGALoader --read-xadc` with the XPCU cable on the CM4.
 
-If no XADC reading is fresh and a pvt-lab calib.json is installed, the die
-temperature is estimated from the ring oscillators instead (marked as such).
+Ring-oscillator thermometers are fitted on the CM4 against the XADC
+(f_k = a + b*T + c*(VCCINT-1) over the stored history), so a new bitstream
+calibrates itself once the heater has swept the die over >= 8 C. Until then
+/etc/pvtd/calib.json (from fpga/pvt-lab sweep) is used if present.
 
-Samples go to SQLite every --period seconds (default 10 s, kept --keep-days).
-HTTP (GET only, no shell, no JTAG, no writes):
-    /              the page (web/index.html)
-    /api/now       latest values
-    /api/history?h=24    downsampled history for the last h hours (max 720)
+Public control API (anyone may use it; every input is validated, rate-limited
+and bounded, there is no path to JTAG, files or a shell):
+    POST /api/control  {"action": ..., ...}
+        heater {duty 0-255} | hold {temp_c} | off | quiet {on} | clear
+        | droop {tap 0-63} | trng {run} | trng_rate {div 0-9} | trng_clear
+Safety: the heater is refused without a trusted temperature, turns off at
+--tmax (and stays off until the die is 10 C cooler), every heater/hold
+session has a --lease after which it turns off, the pvt_lab watchdog drops
+the heater 2.7 s after pvtd stops sending keepalives, and the on-chip
+over-temperature alarm is armed at --tmax + 3 C as a hardware backstop.
 
+GET /, /api/now, /api/history?h=24, /api/trng/random, /healthz.
 Python 3 stdlib only.
 """
-import argparse, json, os, re, select, sqlite3, subprocess, termios, threading, time
+import argparse, base64, collections, hashlib, json, math, os, re, select, sqlite3, subprocess
+import termios, threading, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
@@ -33,28 +43,32 @@ def ro_mhz(count):
     return 2 * count * REF_HZ / GATE / 1e6
 
 
-# ------------------------------------------------------------------ UART
-class Uart(threading.Thread):
+def mhz_to_count(mhz):
+    return int(round(mhz * 1e6 * GATE / (2 * REF_HZ)))
+
+
+def open_serial(dev, baud, write=True):
+    fd = os.open(dev, (os.O_RDWR if write else os.O_RDONLY) | os.O_NOCTTY | os.O_NONBLOCK)
+    a = termios.tcgetattr(fd)
+    a[0] = a[1] = a[3] = 0
+    a[2] = termios.CS8 | termios.CREAD | termios.CLOCAL
+    speed = getattr(termios, "B%d" % baud, None)
+    if speed is not None:
+        a[4] = a[5] = speed
+    termios.tcsetattr(fd, termios.TCSANOW, a)
+    termios.tcflush(fd, termios.TCIOFLUSH)
+    return fd
+
+
+# ------------------------------------------------------------------ pvt_lab link
+class PvtLink(threading.Thread):
     daemon = True
 
     def __init__(self, dev):
         super().__init__()
-        self.dev, self.lock = dev, threading.Lock()
-        self.ros = self.extra = None
-        self.t = 0.0
-        self.err = "not started"
-
-    def _open(self):
-        fd = os.open(self.dev, os.O_RDONLY | os.O_NOCTTY | os.O_NONBLOCK)
-        a = termios.tcgetattr(fd)
-        a[0] = 0                                      # iflag
-        a[1] = 0                                      # oflag
-        a[2] = termios.CS8 | termios.CREAD | termios.CLOCAL
-        a[3] = 0                                      # lflag: raw
-        a[4] = a[5] = termios.B115200
-        termios.tcsetattr(fd, termios.TCSANOW, a)
-        termios.tcflush(fd, termios.TCIFLUSH)
-        return fd
+        self.dev, self.lock, self.wlock = dev, threading.Lock(), threading.Lock()
+        self.fd = None
+        self.d, self.t = None, 0.0
 
     def parse(self, line):
         tok = line.split()
@@ -64,32 +78,57 @@ class Uart(threading.Thread):
             ros = [ro_mhz(int(x, 16)) for x in tok[1:6]]
         except ValueError:
             return
-        if not all(50 < f < 2000 for f in ros):       # a corrupted line
+        # a ring that doesn't oscillate (count 0) or a garbled field reads None
+        ros = [f if 50 < f < 2000 else None for f in ros]
+        if not any(ros):
             return
-        # pvt-lab adds single-letter fields after the ROs: H dd, M m, D ..., P ..., A f
-        extra = None
-        if len(tok) >= 10 and tok[6] == "H" and tok[8] == "M":
-            try:
-                extra = dict(heater_duty=int(tok[7], 16), heater_mode=int(tok[9], 16))
-                if "A" in tok[10:] and tok.index("A", 10) + 1 < len(tok):
-                    a = int(tok[tok.index("A", 10) + 1], 16)
-                    extra["alarms"] = [n for b, n in ((1, "droop"), (2, "glitch"), (4, "over-temp")) if a & b]
-            except ValueError:
-                extra = None
+        d = dict(ro=ros, lab=False)
+        kv = {}
+        i = 6
+        while i < len(tok):                      # single-letter keys, hex values until the next key
+            k, j = tok[i], i + 1
+            while j < len(tok) and not (len(tok[j]) == 1 and tok[j] in "HMDPA"):
+                j += 1
+            kv[k] = tok[i + 1:j]
+            i = j
+        try:
+            if "H" in kv and "M" in kv:
+                d.update(lab=True, duty=int(kv["H"][0], 16), mode=int(kv["M"][0], 16))
+            if "D" in kv and len(kv["D"]) >= 2 and int(kv["D"][0], 16) and int(kv["D"][1], 16):
+                taps = int(kv["D"][0], 16) / 4096.0
+                d.update(tdc_taps=taps, tdc_ps=1e12 / (ro_mhz(int(kv["D"][1], 16)) * 1e6 * taps))
+            if "P" in kv and len(kv["P"]) >= 3:
+                d.update(droop_min=int(kv["P"][0], 16), droop_max=int(kv["P"][1], 16),
+                         droop_avg=int(kv["P"][2], 16) / 32768.0)
+            if "A" in kv and kv["A"]:
+                a = int(kv["A"][0], 16)
+                d["alarms"] = [n for b, n in ((1, "droop"), (2, "glitch"), (4, "over-temp")) if a & b]
+        except (ValueError, IndexError):
+            return
         with self.lock:
-            self.ros, self.extra, self.t, self.err = ros, extra, time.time(), None
+            self.d, self.t = d, time.time()
+
+    def send(self, cmd):
+        with self.wlock:
+            if self.fd is None:
+                return False
+            try:
+                os.write(self.fd, (cmd + "\n").encode())
+                return True
+            except OSError:
+                return False
 
     def run(self):
         while True:
             try:
-                fd = self._open()
+                self.fd = open_serial(self.dev, 115200)
                 buf = b""
                 while True:
-                    r, _, _ = select.select([fd], [], [], 5)
+                    r, _, _ = select.select([self.fd], [], [], 5)
                     if not r:
                         continue
                     try:
-                        chunk = os.read(fd, 512)
+                        chunk = os.read(self.fd, 512)
                     except BlockingIOError:
                         continue
                     if not chunk:
@@ -100,78 +139,189 @@ class Uart(threading.Thread):
                         line, buf = buf.split(b"\n", 1)
                         self.parse(line.decode("ascii", "replace"))
                     buf = buf[-512:]
-            except OSError as e:
-                with self.lock:
-                    self.err = "uart: %s" % e.strerror
+            except OSError:
+                self.fd = None
                 time.sleep(5)
 
-    def latest(self):
+    def latest(self, max_age=10):
         with self.lock:
-            return self.ros, self.extra, self.t
+            return self.d if self.d and time.time() - self.t < max_age else None
 
 
-# ------------------------------------------------------------------ XADC
-class Xadc(threading.Thread):
+# ------------------------------------------------------------------ TRNG link
+class TrngLink(threading.Thread):
+    """Raw bits at 1 Mbaud. Keeps a rolling window for statistics."""
+    daemon = True
+    WIN = 1 << 16            # bytes kept for statistics
+
+    def __init__(self, dev):
+        super().__init__()
+        self.dev, self.lock = dev, threading.Lock()
+        self.fd = None
+        self.buf = bytearray()
+        self.rate = collections.deque()   # (time, bytes), last 3 s
+        self.last_rx, self.total = 0.0, 0
+        self.want_run, self.div = True, 4
+        self.pool = hashlib.sha256()                # conditioner input
+
+    def send(self, b):
+        if self.fd is not None:
+            try:
+                os.write(self.fd, b)
+                return True
+            except OSError:
+                pass
+        return False
+
+    def run(self):
+        while True:
+            try:
+                self.fd = open_serial(self.dev, 1000000)
+                self.send(b"%dG" % self.div if self.want_run else b"S")
+                while True:
+                    r, _, _ = select.select([self.fd], [], [], 1)
+                    if not r:
+                        continue
+                    try:
+                        chunk = os.read(self.fd, 65536)
+                    except BlockingIOError:
+                        continue
+                    if not chunk:
+                        time.sleep(0.05)
+                        continue
+                    now = time.time()
+                    with self.lock:
+                        self.buf += chunk
+                        if len(self.buf) > self.WIN:
+                            del self.buf[:len(self.buf) - self.WIN]
+                        self.rate.append((now, len(chunk)))
+                        while self.rate and now - self.rate[0][0] > 3:
+                            self.rate.popleft()
+                        self.last_rx = now
+                        self.total += len(chunk)
+                        self.pool.update(chunk)
+            except OSError:
+                self.fd = None
+                time.sleep(5)
+
+    def random(self, n=32):
+        """Conditioned output: SHA-256 over everything received since the last call
+        (>= 2x as many raw bits as output bits, else None)."""
+        with self.lock:
+            if len(self.buf) < 2 * n or time.time() - self.last_rx > 5:
+                return None
+            out = self.pool.digest()[:n]
+            self.pool = hashlib.sha256(out)
+            return out
+
+    def stats(self):
+        now = time.time()
+        with self.lock:
+            live = now - self.last_rx < 2
+            data = bytes(self.buf[-8192:])
+            pts = [r for r in self.rate if now - r[0] < 3]
+            bps = sum(r[1] for r in pts) * 8 / 3.0 if pts else 0.0
+            total = self.total
+        st = dict(live=live, running=self.want_run, div=self.div, bitrate=bps if live else 0.0,
+                  total_bytes=total)
+        if live and len(data) >= 1024:
+            n = len(data) * 8
+            ones = sum(bin(b).count("1") for b in data)
+            p1 = ones / n
+            pmax = max(p1, 1 - p1)
+            # 90B most-common-value estimate with its 99% upper bound
+            pu = min(1.0, pmax + 2.576 * math.sqrt(pmax * (1 - pmax) / (n - 1)))
+            bits = int.from_bytes(data, "big")
+            x = bits ^ (bits >> 1)
+            trans = bin(x & ((1 << (n - 1)) - 1)).count("1")
+            # longest run
+            s = bin(bits)[2:].zfill(n)
+            longest = max(len(m.group(0)) for m in re.finditer(r"0+|1+", s))
+            st.update(p1=p1, min_entropy=-math.log2(pu), shannon=-(p1 * math.log2(p1) + (1 - p1) * math.log2(1 - p1)),
+                      autocorr1=1 - 2 * trans / (n - 1) - (2 * p1 - 1) ** 2, longest_run=longest,
+                      bitmap=base64.b64encode(data[-2048:]).decode())
+        elif not live and self.want_run and total:
+            st["note"] = "stream stopped (health-test alarm latched?)"
+        return st
+
+
+# ------------------------------------------------------------------ XADC over JTAG
+class Jtag(threading.Thread):
     daemon = True
 
-    def __init__(self, ofl, firmware, freq, period):
+    def __init__(self, args):
         super().__init__()
-        self.cmd = [ofl, "-c", "xilinxPlatformCableUsb", "--freq", str(freq)]
-        if firmware and os.path.exists(firmware):
-            self.cmd += ["--probe-firmware", firmware]
-        self.cmd += ["--read-xadc"]
-        self.period, self.lock = period, threading.Lock()
+        self.args, self.lock = args, threading.Lock()   # lock = the cable
+        self.base = [args.ofl, "-c", "xilinxPlatformCableUsb"]
+        if os.path.exists(args.firmware):
+            self.base += ["--probe-firmware", args.firmware]
         self.val, self.t, self.err = None, 0.0, "not started"
+        self.last_load, self.load_msg = 0.0, None
 
     def read(self):
-        out = subprocess.run(self.cmd, capture_output=True, text=True, timeout=30).stdout
+        out = subprocess.run(self.base + ["--freq", str(self.args.jtag_freq), "--read-xadc"],
+                             capture_output=True, text=True, timeout=30).stdout
         d = json.loads(re.sub(r",\s*}", "}", out[out.find("{"):out.rfind("}") + 1]))
         return dict(temp_c=float(d["temp"]), vccint_v=float(d["vccint"]), vccaux_v=float(d["vccaux"]))
+
+    def load(self, bit):
+        """Reconfigure the FPGA (only used when it has lost its design)."""
+        with self.lock:
+            self.last_load = time.time()
+            for freq in (6000000, 1500000):
+                r = subprocess.run(self.base + ["--freq", str(freq), "--bitstream", bit],
+                                   capture_output=True, text=True, timeout=300)
+                if "done 1" in r.stdout + r.stderr:
+                    self.load_msg = "reloaded %s at %s" % (os.path.basename(bit), time.strftime("%H:%M"))
+                    return True
+            self.load_msg = "reload failed at %s" % time.strftime("%H:%M")
+            return False
 
     def run(self):
         while True:
             t0 = time.time()
-            try:
-                v = self.read()
-                with self.lock:
+            with self.lock:
+                try:
+                    v = self.read()
                     self.val, self.t, self.err = v, time.time(), None
-            except FileNotFoundError:
-                with self.lock:
+                except FileNotFoundError:
                     self.err = "openFPGALoader not installed"
-            except Exception as e:  # no cable, cable busy, bad JSON
-                with self.lock:
-                    self.err = "xadc: %s" % type(e).__name__
-            time.sleep(max(1.0, self.period - (time.time() - t0)))
+                except Exception as e:
+                    self.err = type(e).__name__
+            time.sleep(max(1.0, self.args.xadc_period - (time.time() - t0)))
 
     def latest(self):
-        with self.lock:
-            return self.val, self.t
+        return self.val if self.val and time.time() - self.t < 3 * self.args.xadc_period + 30 else None
 
 
-# ------------------------------------------------------------------ state
+# ------------------------------------------------------------------ storage
 class Store:
-    COLS = ["temp_c", "vccint_v", "vccaux_v"] + ["ro%d_mhz" % k for k in range(NRO)] + ["ro_temp_c"]
+    COLS = (["temp_c", "vccint_v", "vccaux_v"] + ["ro%d_mhz" % k for k in range(NRO)] +
+            ["ro_temp_c", "duty", "tdc_ps", "droop_avg", "trng_p1"])
 
     def __init__(self, path, keep_days):
         os.makedirs(os.path.dirname(path), exist_ok=True)
         self.db = sqlite3.connect(path, check_same_thread=False)
         self.lock = threading.Lock()
         self.keep = keep_days * 86400
-        cols = ", ".join("%s REAL" % c for c in self.COLS)
         with self.lock:
-            self.db.execute("CREATE TABLE IF NOT EXISTS s (t INTEGER PRIMARY KEY, %s)" % cols)
+            self.db.execute("CREATE TABLE IF NOT EXISTS s (t INTEGER PRIMARY KEY)")
+            have = {r[1] for r in self.db.execute("PRAGMA table_info(s)")}
+            for c in self.COLS:
+                if c not in have:
+                    self.db.execute("ALTER TABLE s ADD COLUMN %s REAL" % c)
             self.db.commit()
 
     def add(self, t, row):
+        cols = ["t"] + self.COLS
         with self.lock:
-            self.db.execute("INSERT OR REPLACE INTO s VALUES (?%s)" % (",?" * len(self.COLS)),
+            self.db.execute("INSERT OR REPLACE INTO s (%s) VALUES (%s)" % (",".join(cols), ",".join("?" * len(cols))),
                             [int(t)] + [row.get(c) for c in self.COLS])
             self.db.execute("DELETE FROM s WHERE t < ?", (int(t - self.keep),))
             self.db.commit()
 
     def history(self, hours, points=600):
-        t1 = time.time()
-        t0 = t1 - hours * 3600
+        t0 = time.time() - hours * 3600
         step = max(10, int(hours * 3600 / points))
         sel = ", ".join("AVG(%s)" % c for c in self.COLS)
         with self.lock:
@@ -180,42 +330,323 @@ class Store:
         return dict(step_s=step, cols=["t"] + self.COLS,
                     rows=[[r[0]] + [None if v is None else round(v, 4) for v in r[1:]] for r in rows])
 
+    def calib_rows(self, since):
+        with self.lock:
+            return self.db.execute("SELECT temp_c, vccint_v, %s FROM s WHERE t >= ? AND temp_c IS NOT NULL "
+                                   "AND vccint_v IS NOT NULL" %
+                                   ",".join("ro%d_mhz" % k for k in range(NRO)), (int(since),)).fetchall()
 
+
+def solve3(A, b):
+    M = [row[:] + [bb] for row, bb in zip(A, b)]
+    for c in range(3):
+        p = max(range(c, 3), key=lambda r: abs(M[r][c]))
+        M[c], M[p] = M[p], M[c]
+        if abs(M[c][c]) < 1e-12:
+            raise ValueError("singular")
+        for r in range(3):
+            if r != c:
+                f = M[r][c] / M[c][c]
+                M[r] = [x - f * y for x, y in zip(M[r], M[c])]
+    return [M[i][3] / M[i][i] for i in range(3)]
+
+
+def fit_calib(rows):
+    """rows: (T, vint, f0..f4). Returns calib dict like pvt_lab.py sweep."""
+    cal = {"ro": [], "n": len(rows), "t_range": [min(r[0] for r in rows), max(r[0] for r in rows)],
+           "date": time.strftime("%Y-%m-%d %H:%M"), "source": "auto (pvtd vs XADC)"}
+    for k in range(NRO):
+        rk = [r for r in rows if r[2 + k] is not None]   # each ring on its own samples
+        if len(rk) < 60 or max(r[0] for r in rk) - min(r[0] for r in rk) < 8:
+            cal["ro"].append(dict(a=0.0, b=0.0, c=0.0, rms_mhz=None, rms_c=99.0))
+            continue
+        X = [(1.0, r[0], r[1] - 1.0) for r in rk]
+        y = [r[2 + k] for r in rk]
+        A = [[sum(x[i] * x[j] for x in X) for j in range(3)] for i in range(3)]
+        bb = [sum(x[i] * yy for x, yy in zip(X, y)) for i in range(3)]
+        a, b, c = solve3(A, bb)
+        res = [yy - (a + b * x[1] + c * x[2]) for x, yy in zip(X, y)]
+        rms = (sum(e * e for e in res) / len(res)) ** 0.5
+        cal["ro"].append(dict(a=a, b=b, c=c, rms_mhz=rms, rms_c=abs(rms / b) if b else 99.0))
+    return cal
+
+
+# ------------------------------------------------------------------ the daemon
 class Pvtd:
     def __init__(self, args):
         self.args = args
-        self.uart = Uart(args.serial)
-        self.xadc = Xadc(args.ofl, args.firmware, args.jtag_freq, args.xadc_period) if args.xadc else None
+        self.lab = PvtLink(args.serial)
+        self.trng = TrngLink(args.trng) if args.trng else None
+        self.jtag = Jtag(args) if args.xadc else None
         self.store = Store(args.db, args.keep_days)
-        self.cal = None
-        if args.calib and os.path.exists(args.calib):
-            self.cal = json.load(open(args.calib))
+        self.lock = threading.Lock()
+        self.cal, self.cal_src = None, None
+        self.auto_cal_path = os.path.join(os.path.dirname(args.db), "calib_auto.json")
+        for path, src in ((self.auto_cal_path, "auto"), (args.calib, "file")):
+            if path and os.path.exists(path):
+                try:
+                    self.cal, self.cal_src = json.load(open(path)), src
+                    break
+                except ValueError:
+                    pass
+        # control state
+        self.ctl = dict(mode="off", duty=0, hold_c=None, lease_until=0.0, quiet=True, droop_tap=args.droop_tap)
+        self.cooldown = False
+        self.log = collections.deque(maxlen=40)
+        self.hits = collections.defaultdict(collections.deque)
+        self.glob = collections.deque()
         self.start = time.time()
+        self.last_lab = time.time()
 
-    def ro_temp(self, ros, vint):
-        if not self.cal or not ros:
+    # -------------------------------------------- thermometry
+    def best_ro(self):
+        if not self.cal:
             return None
-        k = self.args.calib_ro
-        c = self.cal["ro"][k]
-        return (ros[k] - c["a"] - c["c"] * ((vint or 1.0) - 1.0)) / c["b"]
+        return min(range(NRO), key=lambda k: self.cal["ro"][k].get("rms_c", 99.0))
+
+    def ro_temps(self, d, vint):
+        if not self.cal or not d or not d["lab"]:
+            return None
+        out = []
+        for k in range(NRO):
+            c = self.cal["ro"][k]
+            f = d["ro"][k]
+            out.append((f - c["a"] - c["c"] * ((vint or 1.0) - 1.0)) / c["b"] if c["b"] and f else None)
+        return out
 
     def now(self):
-        ros, extra, tu = self.uart.latest()
-        xv, tx = self.xadc.latest() if self.xadc else (None, 0.0)
-        t = time.time()
-        if ros and t - tu > 10:
-            ros = extra = None
-        if xv and t - tx > 3 * self.args.xadc_period + 30:
-            xv = None
-        # calib.json is only valid for the pvt-lab bitstream (routing moves the
-        # RO frequencies), and only pvt-lab sends the H/M fields.
-        rt = self.ro_temp(ros, xv and xv["vccint_v"]) if extra else None
-        temp, src = (xv["temp_c"], "xadc") if xv else ((rt, "ro") if rt is not None else (None, None))
-        return dict(time=int(t), temp_c=temp, temp_source=src, ro_temp_c=rt,
-                    vccint_v=xv and xv["vccint_v"], vccaux_v=xv and xv["vccaux_v"],
-                    ro_mhz=ros, heater=extra, uptime_s=int(t - self.start),
-                    sources=dict(uart=ros is not None, xadc=xv is not None,
-                                 calib=self.cal is not None))
+        d = self.lab.latest()
+        xv = self.jtag.latest() if self.jtag else None
+        vint = xv and xv["vccint_v"]
+        rts = self.ro_temps(d, vint)
+        k = self.best_ro()
+        rt = rts[k] if rts and k is not None else None
+        temp, src = (xv["temp_c"], "xadc") if xv else ((rt, "ro%d" % k) if rt is not None else (None, None))
+        with self.lock:
+            ctl = dict(self.ctl)
+            ctl["lease_s"] = max(0, int(ctl.pop("lease_until") - time.time())) if ctl["mode"] != "off" else 0
+            log = list(self.log)
+            cool = self.cooldown
+        out = dict(time=int(time.time()), temp_c=temp, temp_source=src,
+                   vccint_v=vint, vccaux_v=xv and xv["vccaux_v"],
+                   ro_mhz=d and d["ro"], ro_temp_c=rts, thermometer=k,
+                   calib=self.cal and dict(source=self.cal_src, n=self.cal.get("n"), t_range=self.cal.get("t_range"),
+                                           rms_c=[round(r.get("rms_c", 99), 2) for r in self.cal["ro"]]),
+                   lab=d and {kk: d.get(kk) for kk in ("duty", "mode", "tdc_taps", "tdc_ps", "droop_min",
+                                                       "droop_max", "droop_avg", "alarms") if kk in d},
+                   control=ctl, cooldown=cool, tmax=self.args.tmax, max_hold=self.args.max_hold,
+                   log=log, uptime_s=int(time.time() - self.start),
+                   sources=dict(lab=d is not None and d["lab"], ro=d is not None, xadc=xv is not None,
+                                trng=bool(self.trng and self.trng.stats()["live"])),
+                   jtag_note=self.jtag.load_msg if self.jtag else None)
+        if self.trng:
+            out["trng"] = self.trng.stats()
+        return out
+
+    # -------------------------------------------- control
+    def note(self, who, what):
+        with self.lock:
+            self.log.appendleft(dict(t=int(time.time()), who=who, what=what))
+
+    def apply(self, mode, duty=0, hold_c=None):
+        """Push a heater state to the FPGA. Caller validated it."""
+        if mode == "off":
+            self.lab.send("H00")
+        elif mode == "heater":
+            self.lab.send("H%02X" % duty)
+        elif mode == "hold":
+            k = self.best_ro()
+            c = self.cal["ro"][k]
+            xv = self.jtag.latest() if self.jtag else None
+            vint = xv["vccint_v"] if xv else 1.0
+            cnt = mhz_to_count(c["a"] + c["b"] * hold_c + c["c"] * (vint - 1.0))
+            self.lab.send("P%d" % (1 if c["b"] > 0 else 0))
+            self.lab.send("G6")
+            self.lab.send("MFF")
+            self.lab.send("S%d%06X" % (k, cnt))
+
+    def arm_hw_alarm(self):
+        """On-chip over-temperature alarm at tmax+3 C on the best RO (hardware backstop)."""
+        if self.ctl["droop_tap"] is not None:
+            self.lab.send("T%02X" % self.ctl["droop_tap"])
+        k = self.best_ro()
+        if k is None or not self.cal["ro"][k]["b"]:
+            return
+        c = self.cal["ro"][k]
+        self.lab.send("P%d" % (1 if c["b"] > 0 else 0))
+        self.lab.send("A%d%06X" % (k, mhz_to_count(c["a"] + c["b"] * (self.args.tmax + 3))))
+
+    def trusted_temp(self):
+        n = self.now()
+        if n["temp_source"] == "xadc":
+            return n["temp_c"]
+        if n["temp_source"] and self.cal_src == "auto" and n["calib"] and n["calib"]["rms_c"][n["thermometer"]] < 2.5:
+            return n["temp_c"]
+        if n["temp_source"] and self.cal_src == "file":
+            return n["temp_c"]
+        return None
+
+    def rate_ok(self, ip):
+        now = time.time()
+        q = self.hits[ip]
+        while q and now - q[0] > 60:
+            q.popleft()
+        while self.glob and now - self.glob[0] > 60:
+            self.glob.popleft()
+        if len(q) >= self.args.rate or len(self.glob) >= 4 * self.args.rate:
+            return False
+        q.append(now)
+        self.glob.append(now)
+        if len(self.hits) > 5000:
+            self.hits.clear()
+        return True
+
+    def control(self, req, who):
+        a = req.get("action")
+        if a in ("heater", "hold"):
+            if self.lab.latest() is None or not self.lab.latest()["lab"]:
+                return 409, "the FPGA isn't running the playground design right now"
+            t = self.trusted_temp()
+            if t is None:
+                return 409, "no trusted temperature reading, so the heater stays off"
+            if self.cooldown or t >= self.args.tmax - 2:
+                return 409, "cooling down: the heater unlocks below %.0f C" % (self.args.tmax - 10)
+        if a == "heater":
+            duty = req.get("duty")
+            if not isinstance(duty, int) or not 0 <= duty <= 255:
+                return 400, "duty must be 0-255"
+            mode = "heater" if duty else "off"
+            with self.lock:
+                self.ctl.update(mode=mode, duty=duty, hold_c=None, lease_until=time.time() + self.args.lease)
+            self.apply(mode, duty)
+            self.note(who, "heater %d%%" % round(duty / 2.55) if duty else "heater off")
+        elif a == "hold":
+            tc = req.get("temp_c")
+            if not isinstance(tc, (int, float)) or not 30 <= tc <= self.args.max_hold:
+                return 400, "hold temperature must be 30-%d C" % self.args.max_hold
+            if not self.cal:
+                return 409, "no ring-oscillator calibration yet"
+            with self.lock:
+                self.ctl.update(mode="hold", duty=0, hold_c=float(tc), lease_until=time.time() + self.args.lease)
+            self.apply("hold", hold_c=float(tc))
+            self.note(who, "hold %.1f C" % tc)
+        elif a == "off":
+            with self.lock:
+                self.ctl.update(mode="off", duty=0, hold_c=None)
+            self.apply("off")
+            self.note(who, "heater off")
+        elif a == "quiet":
+            on = req.get("on")
+            if not isinstance(on, bool):
+                return 400, "on must be true/false"
+            with self.lock:
+                self.ctl["quiet"] = on
+            self.lab.send("W%d" % on)
+            self.note(who, "quiet window %s" % ("on" if on else "off"))
+        elif a == "clear":
+            self.lab.send("C")
+            self.arm_hw_alarm()
+            self.note(who, "cleared alarms")
+        elif a == "droop":
+            tap = req.get("tap")
+            if not isinstance(tap, int) or not 0 <= tap <= 63:
+                return 400, "tap must be 0-63"
+            with self.lock:
+                self.ctl["droop_tap"] = tap
+            self.lab.send("T%02X" % tap)
+            self.note(who, "droop tap %d" % tap)
+        elif a in ("trng", "trng_rate", "trng_clear"):
+            if not self.trng:
+                return 409, "no TRNG link"
+            if a == "trng":
+                run = req.get("run")
+                if not isinstance(run, bool):
+                    return 400, "run must be true/false"
+                self.trng.want_run = run
+                self.trng.send(b"G" if run else b"S")
+                self.note(who, "TRNG %s" % ("started" if run else "stopped"))
+            elif a == "trng_rate":
+                div = req.get("div")
+                if not isinstance(div, int) or not 0 <= div <= 9:
+                    return 400, "div must be 0-9"
+                self.trng.div = div
+                self.trng.send(b"%d" % div)
+                self.note(who, "TRNG sample every 2^%d clocks" % div)
+            else:
+                self.trng.send(b"C")
+                if self.trng.want_run:
+                    self.trng.send(b"G")
+                self.note(who, "TRNG alarm cleared")
+        else:
+            return 400, "unknown action"
+        return 200, "ok"
+
+    # -------------------------------------------- loops
+    def supervisor(self):
+        """1 Hz: keepalive, lease, temperature guard, self-calibration, FPGA reload."""
+        armed_for = None
+        last_fit = 0.0
+        while True:
+            time.sleep(1)
+            self.lab.send("K")
+            d = self.lab.latest()
+            if d and d["lab"]:
+                self.last_lab = time.time()
+                if d.get("mode") == 2 and self.ctl["mode"] == "off":
+                    self.lab.send("H00")                       # clear a stale watchdog trip
+                if armed_for != id(self.cal):
+                    self.lab.send("W%d" % self.ctl["quiet"])
+                    self.arm_hw_alarm()
+                    armed_for = id(self.cal)
+            with self.lock:
+                mode, lease = self.ctl["mode"], self.ctl["lease_until"]
+            t = self.trusted_temp()
+            if mode != "off":
+                why = None
+                if time.time() > lease:
+                    why = "lease ended"
+                elif t is None:
+                    why = "lost the temperature reading"
+                elif t >= self.args.tmax:
+                    why = "reached %.0f C" % self.args.tmax
+                    self.cooldown = True
+                elif d and d.get("mode") == 2:
+                    why = "FPGA watchdog tripped"
+                if why:
+                    with self.lock:
+                        self.ctl.update(mode="off", duty=0, hold_c=None)
+                    self.apply("off")
+                    self.note("pvtd", "heater off: " + why)
+                elif mode == "heater":
+                    self.apply("heater", self.ctl["duty"])       # re-assert after a watchdog/reset
+            if self.cooldown and t is not None and t < self.args.tmax - 10:
+                self.cooldown = False
+            # self-calibration against the XADC, every 10 min
+            if self.jtag and time.time() - last_fit > 600:
+                last_fit = time.time()
+                self.refit()
+            # FPGA lost its design (power cycle): reload the playground bitstream
+            if (self.jtag and self.args.bitstream and os.path.exists(self.args.bitstream)
+                    and time.time() - self.last_lab > 90 and time.time() - self.jtag.last_load > 900):
+                self.note("pvtd", "no data from the FPGA for 90 s, reloading the playground design")
+                self.jtag.load(self.args.bitstream)
+                self.last_lab = time.time()
+
+    def refit(self):
+        rows = self.store.calib_rows(time.time() - 7 * 86400)
+        if len(rows) < 60 or max(r[0] for r in rows) - min(r[0] for r in rows) < 8:
+            return
+        try:
+            cal = fit_calib(rows)
+        except ValueError:
+            return
+        k = min(range(NRO), key=lambda i: cal["ro"][i]["rms_c"])
+        if cal["ro"][k]["rms_c"] > 2.5:
+            return
+        tmp = self.auto_cal_path + ".tmp"
+        json.dump(cal, open(tmp, "w"), indent=1)
+        os.replace(tmp, self.auto_cal_path)
+        self.cal, self.cal_src = cal, "auto"
 
     def sampler(self):
         while True:
@@ -223,21 +654,32 @@ class Pvtd:
             n = self.now()
             if n["temp_c"] is None and not n["ro_mhz"]:
                 continue
-            row = dict(temp_c=n["temp_c"], vccint_v=n["vccint_v"], vccaux_v=n["vccaux_v"],
-                       ro_temp_c=n["ro_temp_c"])
+            # temp_c is the XADC only: the self-calibration fits the ROs against it
+            row = dict(temp_c=n["temp_c"] if n["temp_source"] == "xadc" else None,
+                       vccint_v=n["vccint_v"], vccaux_v=n["vccaux_v"],
+                       ro_temp_c=(n["ro_temp_c"][n["thermometer"]] if n["ro_temp_c"] else None))
             for k, f in enumerate(n["ro_mhz"] or []):
                 row["ro%d_mhz" % k] = f
+            lab = n["lab"] or {}
+            row.update(duty=lab.get("duty"), tdc_ps=lab.get("tdc_ps"), droop_avg=lab.get("droop_avg"),
+                       trng_p1=(n.get("trng") or {}).get("p1"))
             self.store.add(n["time"], row)
 
     def run(self):
-        self.uart.start()
-        if self.xadc:
-            self.xadc.start()
+        self.lab.start()
+        if self.trng:
+            self.trng.start()
+        if self.jtag:
+            self.jtag.start()
         threading.Thread(target=self.sampler, daemon=True).start()
+        threading.Thread(target=self.supervisor, daemon=True).start()
         srv = ThreadingHTTPServer((self.args.bind, self.args.http), make_handler(self))
         srv.daemon_threads = True
         print("pvtd on %s:%d" % (self.args.bind, self.args.http), flush=True)
-        srv.serve_forever()
+        try:
+            srv.serve_forever()
+        finally:
+            self.lab.send("H00")
 
 
 # ------------------------------------------------------------------ http
@@ -267,30 +709,61 @@ def make_handler(p):
             if self.command != "HEAD":
                 self.wfile.write(b)
 
+        def _json(self, code, obj):
+            self._send(code, json.dumps(obj), "application/json")
+
+        def who(self):
+            c = self.headers.get("Cf-Ipcountry")
+            return "visitor (%s)" % c if c and re.fullmatch(r"[A-Z]{2}", c) else "visitor"
+
+        def ip(self):
+            return self.headers.get("Cf-Connecting-Ip") or self.client_address[0]
+
         def do_GET(self):
             u = urlparse(self.path)
             if u.path in ("/", "/index.html"):
                 with open(page_path, "rb") as f:
                     return self._send(200, f.read(), "text/html; charset=utf-8", "no-cache")
             if u.path == "/api/now":
-                return self._send(200, json.dumps(p.now()), "application/json")
+                return self._json(200, p.now())
             if u.path == "/api/history":
                 try:
                     h = float(parse_qs(u.query).get("h", ["24"])[0])
                 except ValueError:
                     h = 24
-                h = min(max(h, 0.1), 720)
-                return self._send(200, json.dumps(p.store.history(h)), "application/json")
+                return self._json(200, p.store.history(min(max(h, 0.1), 720)))
+            if u.path == "/api/trng/random":
+                if not p.trng or not p.rate_ok(self.ip()):
+                    return self._json(429 if p.trng else 409, dict(error="unavailable"))
+                r = p.trng.random(32)
+                return self._json(200 if r else 409, dict(hex=r.hex()) if r else dict(error="TRNG not streaming"))
             if u.path == "/healthz":
                 return self._send(200, "ok\n", "text/plain")
             self._send(404, "not found\n", "text/plain")
 
         do_HEAD = do_GET
 
-        def _deny(self):
-            self._send(405, "read-only\n", "text/plain")
+        def do_POST(self):
+            if urlparse(self.path).path != "/api/control":
+                return self._send(405, "no\n", "text/plain")
+            n = int(self.headers.get("Content-Length") or 0)
+            if n <= 0 or n > 1024 or "json" not in (self.headers.get("Content-Type") or ""):
+                return self._json(400, dict(error="bad request"))
+            if not p.rate_ok(self.ip()):
+                return self._json(429, dict(error="slow down: too many changes, try again in a minute"))
+            try:
+                req = json.loads(self.rfile.read(n))
+                if not isinstance(req, dict):
+                    raise ValueError
+            except ValueError:
+                return self._json(400, dict(error="bad json"))
+            code, msg = p.control(req, self.who())
+            self._json(code, dict(ok=code == 200, message=msg))
 
-        do_POST = do_PUT = do_DELETE = do_PATCH = do_OPTIONS = _deny
+        def _deny(self):
+            self._send(405, "no\n", "text/plain")
+
+        do_PUT = do_DELETE = do_PATCH = do_OPTIONS = _deny
 
     return H
 
@@ -298,6 +771,7 @@ def make_handler(p):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--serial", default="/dev/serial0")
+    ap.add_argument("--trng", default="/dev/ttyAMA3", help="'' to disable")
     ap.add_argument("--bind", default="0.0.0.0")
     ap.add_argument("--http", type=int, default=8090)
     ap.add_argument("--db", default="/var/lib/pvtd/pvt.db")
@@ -305,12 +779,19 @@ def main():
     ap.add_argument("--period", type=float, default=10, help="s between stored samples")
     ap.add_argument("--keep-days", type=float, default=30)
     ap.add_argument("--no-xadc", dest="xadc", action="store_false")
-    ap.add_argument("--xadc-period", type=float, default=10, help="s between JTAG XADC reads")
+    ap.add_argument("--xadc-period", type=float, default=5)
     ap.add_argument("--ofl", default="/usr/local/bin/openFPGALoader")
     ap.add_argument("--firmware", default="/usr/local/share/pvtd/xusb_xp2.hex")
     ap.add_argument("--jtag-freq", type=int, default=1500000)
-    ap.add_argument("--calib", default="/etc/pvtd/calib.json", help="fpga/pvt-lab calib.json")
-    ap.add_argument("--calib-ro", type=int, default=2, help="RO used as thermometer")
+    ap.add_argument("--bitstream", default="/usr/local/share/pvtd/playground.bit",
+                    help="reloaded over JTAG if the FPGA goes quiet ('' = never)")
+    ap.add_argument("--calib", default="/etc/pvtd/calib.json")
+    ap.add_argument("--droop-tap", type=lambda v: int(v, 0), default=0x2C,
+                    help="droop-monitor delay tap set at start (0x2C puts the edge mid-range on playground.bit)")
+    ap.add_argument("--tmax", type=float, default=72.0, help="heater cut-off, C")
+    ap.add_argument("--max-hold", type=int, default=60, help="highest hold setpoint, C")
+    ap.add_argument("--lease", type=float, default=600, help="s a heater/hold session lasts")
+    ap.add_argument("--rate", type=int, default=20, help="control requests per minute per visitor")
     Pvtd(ap.parse_args()).run()
 
 

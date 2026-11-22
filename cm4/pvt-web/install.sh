@@ -25,15 +25,21 @@ fi
 install -d /usr/local/share/pvtd
 install -m 644 "$REPO/handoff/cable/xusb_hex/xusb_xp2.hex" /usr/local/share/pvtd/xusb_xp2.hex
 install -m 644 "$HERE/60-xpcu.rules" /etc/udev/rules.d/60-xpcu.rules
+grep -q "^dtoverlay=uart3" /boot/firmware/config.txt || { echo "dtoverlay=uart3" >> /boot/firmware/config.txt; echo "added dtoverlay=uart3: reboot needed for the TRNG UART"; }
 udevadm control --reload-rules && udevadm trigger --subsystem-match=usb
 
 id pvtd >/dev/null 2>&1 || useradd --system --no-create-home --shell /usr/sbin/nologin pvtd
 install -d /opt/pvtd/web /etc/pvtd
 install -m 644 "$HERE/pvtd.py" /opt/pvtd/pvtd.py
 install -m 644 "$HERE/web/index.html" /opt/pvtd/web/index.html
-# Optional: a pvt-lab calibration lets pvtd estimate temperature from the ROs
-# when the JTAG cable is not on the CM4.
-[ -f "$REPO/fpga/pvt-lab/calib.json" ] && install -m 644 "$REPO/fpga/pvt-lab/calib.json" /etc/pvtd/calib.json
+# The playground bitstream: pvtd reloads it over JTAG if the FPGA loses its
+# configuration (power cycle). Build it first (playground/, make).
+[ -f "$HERE/playground/playground.bit" ] && install -m 644 "$HERE/playground/playground.bit" /usr/local/share/pvtd/playground.bit
+# Ring-oscillator calibration: pvtd fits its own against the XADC
+# (/var/lib/pvtd/calib_auto.json). A pvt-lab calib.json only matches the
+# pvt-lab bitstream it was swept on, so it is NOT installed for the playground;
+# a stale one is removed. Copy one to /etc/pvtd/calib.json by hand if needed.
+rm -f /etc/pvtd/calib.json
 install -m 644 "$HERE/pvtd.service" /etc/systemd/system/pvtd.service
 systemctl daemon-reload
 systemctl enable pvtd
