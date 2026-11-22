@@ -125,3 +125,33 @@ source ~/opt/litex/venv/bin/activate
 mkdir -p build-qmtech-k7-ddr3 && cd build-qmtech-k7-ddr3
 python3 ../litex-soc/qmtech_kintex7_devboard.py --toolchain=openxc7 --build   # add --sys-clk-freq 75e6 for the 75 MHz variant
 ```
+
+## Standalone (non-LiteX) DDR3 test: `fpga/ddr3-test/` (WIP, 2026-11-22)
+
+UberDDR3 controller/PHY (from openXC7 demo-projects `ddr3-test-arty-s7`)
+ported to this board: PLL from 50 MHz, the same DDR3 LOCs as LiteX, UART on
+JP5 at 9600. `?` returns `'@'` + the calibration state, `0`-`5` return DQS
+ISERDES samples, and `test.py` runs the full write/read round-trip.
+
+Findings so far:
+- Builds clean with the HEAD db after replacing the PHY's fabric-inverted
+  `!i_ddr3_clk` with a PLL 180-degree clock (`i_ddr3_clk_180`). Before that,
+  fasm2frames failed on `RIOI_TBYTESRC.IOI_OCLKM_0.IOI_IMUX31_1`.
+- The controller loops MPR_READ -> COLLECT_DQS -> ANALYZE_DQS (states 2-4)
+  and never calibrates. DQS ISERDES samples read as all 0.
+- **The capture path works.** Opposite pulls on the DQS legs (patched in the
+  FASM) make lane 0 read `0xff` or `0x00`. So the DRAM isn't answering, which
+  puts the problem on the command/CK side.
+- Making the IOB glue bits match Vivado's (IBUF/OBUF_HP_BANK_GLUE, IOB_COL_*)
+  changes nothing.
+- `ODELAY_SUPPORTED=1` (HP bank): prjxray-db has **no feature to route an
+  ODELAYE2 output back to the pad** in HP IOI tiles. Only
+  `RIOI_O0.RIOI_OLOGIC0_OQ always` and `OMUX.D1` exist. So ODELAYs are
+  effectively dropped and the controller's command/CK delay assumptions break.
+  Still stuck in states 2-4.
+- **Next (not done yet):** `ODELAY_SUPPORTED=0` with CK forwarded through an
+  ODDR (D1=0, D2=1, C=i_ddr3_clk) instead of the PHY's `OBUFDS(I=clock)`
+  fabric bypass. The edit to `ddr3_phy.v` didn't apply in this session (pattern
+  mismatch), so the tree still has `ODELAY_SUPPORTED(1)`. After that, add
+  `INTERNAL_VREF 0.75` for bank 34 (the MIG uses internal VREF), which DQ
+  reads will need.
