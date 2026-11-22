@@ -1,0 +1,8 @@
+#!/bin/bash
+# fake systemctl: tracks one unit's state in $MOCK_DIR/pvtd.active
+echo "$(date +%T) $*" >> "$MOCK_DIR/systemctl.log"
+case "$1" in
+  stop) rm -f "$MOCK_DIR/pvtd.active";;
+  start) [ -e "$MOCK_DIR/run/foreign-bitstream" ] && exit 0; touch "$MOCK_DIR/pvtd.active";;
+  is-active) [ -e "$MOCK_DIR/pvtd.active" ];;
+esac

@@ -1,0 +1,306 @@
+#!/usr/bin/python3 -I
+"""fpga-flash: the only privileged part of the FPGA project manager.
+
+Runs as root (the web daemon calls it through a sudoers rule that allows
+nothing else). It flashes ONLY bitstreams from the root-owned catalog, after
+checking their SHA-256, and only while holding the shared board queue.
+
+  fpga-flash switch <project-id> [--by WHO]   flash a catalogued project
+  fpga-flash state                            print the state JSON
+
+switch, step by step:
+  1. look the id up in the catalog, hash the stored bitstream, compare
+  2. fpga-queue join + take web-flasher (refuse if anyone holds or is ahead)
+  3. leaving the playground: stop pvtd and set the flag that keeps it down
+     (a systemd drop-in: ConditionPathExists=!<flag>)
+  4. openFPGALoader ... --bitstream <file>, require "done 1" (retry slower)
+  5. project-specific check (e.g. a status line on the CM4 UART)
+  6. on any failure: flash the fallback (playground) the same way
+  7. going to the playground: clear the flag, start pvtd
+  8. record the state, release the queue with a note naming what is loaded
+
+Exit codes: 0 loaded, 3 fell back to the playground, 4 failed (board state
+unknown), 10 board busy (queue), 2 bad request.
+"""
+import fcntl, hashlib, json, os, re, select, subprocess, sys, termios, time
+
+CONF = {
+    "catalog": "/etc/fpga-manager/catalog.json",
+    "store": "/var/lib/fpga-manager/bitstreams",
+    "state": "/var/lib/fpga-manager/state.json",
+    "run_dir": "/run/fpga-manager",
+    "ofl": "/usr/local/bin/openFPGALoader",
+    "firmware": "/usr/local/share/pvtd/xusb_xp2.hex",
+    "freqs": [6000000, 1500000],
+    "queue": "/usr/local/bin/fpga-queue",
+    "queue_name": "web-flasher",
+    "systemctl": "/usr/bin/systemctl",
+    "pvtd_unit": "pvtd",
+    "serial_map": {},
+    "trusted_uid": 0,
+}
+# Tests only: sudo resets the environment, so this can't be set via the web path.
+if os.environ.get("FPGA_MANAGER_CONF"):
+    CONF.update(json.load(open(os.environ["FPGA_MANAGER_CONF"])))
+FLAG = os.path.join(CONF["run_dir"], "foreign-bitstream")
+ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,39}$")
+
+
+def log(msg):
+    print(time.strftime("%H:%M:%S ") + msg, flush=True)
+
+
+def load_catalog():
+    cat = json.load(open(CONF["catalog"]))
+    return cat, {p["id"]: p for p in cat["projects"]}
+
+
+def bit_path(p):
+    return p.get("file") or os.path.join(CONF["store"], p["id"] + ".bit")
+
+
+def verify(p):
+    """(ok, sha256 or reason). Catalogued projects must match their pinned hash.
+    The playground is the one exception ("trust": "root-owned"): it is pvtd's own
+    /usr/local/share/pvtd/playground.bit, which pvt-web's install.sh replaces on
+    purpose and pvtd already reloads by itself; it must be root-owned and not
+    writable by anyone else, all the way up."""
+    path = bit_path(p)
+    if not os.path.isfile(path):
+        return False, "bitstream for %s not installed" % p["id"]
+    h = sha256(path)
+    if p.get("trust") == "root-owned":
+        stop = CONF.get("trust_root", "/")          # tests only: stop at the temp dir
+        d = path
+        while True:
+            st = os.stat(d)
+            if st.st_uid != CONF["trusted_uid"] or st.st_mode & 0o022:
+                return False, "%s is not root-owned and write-protected: refusing" % d
+            if d in (stop, "/"):
+                break
+            d = os.path.dirname(d)
+        return True, h
+    if h != p["sha256"]:
+        return False, "SHA-256 mismatch for %s: refusing to flash" % p["id"]
+    return True, h
+
+
+def sha256(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for b in iter(lambda: f.read(1 << 20), b""):
+            h.update(b)
+    return h.hexdigest()
+
+
+# ------------------------------------------------------------------ state
+def read_state():
+    try:
+        return json.load(open(CONF["state"]))
+    except (OSError, ValueError):
+        return {"project": None, "history": []}
+
+
+def write_state(st):
+    tmp = CONF["state"] + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(st, f, indent=1)
+    os.chmod(tmp, 0o644)
+    os.replace(tmp, CONF["state"])
+
+
+def set_job(st, **kw):
+    st["job"] = dict(st.get("job") or {}, **kw)
+    write_state(st)
+
+
+# ------------------------------------------------------------------ queue
+def queue(*args):
+    r = subprocess.run([CONF["queue"]] + list(args), capture_output=True, text=True, timeout=60)
+    return r.returncode, (r.stdout + r.stderr).strip()
+
+
+# ------------------------------------------------------------------ pvtd
+def systemctl(*args):
+    return subprocess.run([CONF["systemctl"]] + list(args), capture_output=True, text=True, timeout=60).returncode
+
+
+def pvtd_down():
+    os.makedirs(CONF["run_dir"], exist_ok=True)
+    open(FLAG, "w").write("set by fpga-flash %s\n" % time.strftime("%F %T"))
+    systemctl("stop", CONF["pvtd_unit"])
+
+
+def pvtd_up():
+    try:
+        os.unlink(FLAG)
+    except FileNotFoundError:
+        pass
+    systemctl("start", CONF["pvtd_unit"])
+
+
+# ------------------------------------------------------------------ flash
+def flash(path):
+    base = [CONF["ofl"], "-c", "xilinxPlatformCableUsb"]
+    if os.path.exists(CONF["firmware"]):
+        base += ["--probe-firmware", CONF["firmware"]]
+    last = ""
+    for freq in CONF["freqs"]:
+        log("openFPGALoader at %.1f MHz: %s" % (freq / 1e6, os.path.basename(path)))
+        try:
+            r = subprocess.run(base + ["--freq", str(freq), "--bitstream", path],
+                               capture_output=True, text=True, timeout=300)
+            out = r.stdout + r.stderr
+        except subprocess.TimeoutExpired:
+            out = "timeout"
+        if re.search(r"\bdone 1\b", out):
+            return True, "done 1 at %.1f MHz" % (freq / 1e6)
+        last = (out.strip().splitlines() or ["no output"])[-1][:200]
+        log("no 'done 1': " + last)
+    return False, "flash failed: " + last
+
+
+def open_serial(dev, baud):
+    dev = CONF["serial_map"].get(dev, dev)
+    fd = os.open(dev, os.O_RDONLY | os.O_NOCTTY | os.O_NONBLOCK)
+    if os.isatty(fd):
+        a = termios.tcgetattr(fd)
+        speed = getattr(termios, "B%d" % baud)
+        a[0] = 0; a[1] = 0; a[2] = termios.CS8 | termios.CREAD | termios.CLOCAL; a[3] = 0
+        a[4] = a[5] = speed
+        termios.tcsetattr(fd, termios.TCSANOW, a)
+        termios.tcflush(fd, termios.TCIFLUSH)
+    return fd
+
+
+def check(p):
+    """Project-specific check after "done 1". Returns (ok, message)."""
+    h = p.get("health") or {}
+    if h.get("type") != "uart_line":
+        return True, "no runtime check for this project"
+    rx = re.compile(h["match"])
+    try:
+        fd = open_serial(h["port"], int(h["baud"]))
+    except OSError as e:
+        return False, "can't open %s: %s" % (h["port"], e)
+    buf, t_end = b"", time.time() + float(h.get("within_s", 30))
+    try:
+        while time.time() < t_end:
+            r, _, _ = select.select([fd], [], [], 1)
+            if not r:
+                continue
+            try:
+                buf += os.read(fd, 4096)
+            except BlockingIOError:
+                continue
+            lines = buf.split(b"\n")
+            buf = lines.pop()[-4096:]
+            for ln in lines:
+                if rx.search(ln.decode("ascii", "replace").strip()):
+                    return True, "status line seen on " + h["port"]
+    finally:
+        os.close(fd)
+    return False, "no matching line on %s within %ss" % (h["port"], h.get("within_s", 30))
+
+
+def load(p, st):
+    """Hash-check, flash and check one project. Returns (ok, message)."""
+    path = bit_path(p)
+    set_job(st, step="hash " + p["id"])
+    ok, h = verify(p)
+    if not ok:
+        return False, h
+    p["_sha"] = h
+    pvtd_down()                               # its XADC polling would collide with the flash
+    set_job(st, step="flash " + p["id"])
+    ok, msg = flash(path)
+    if not ok:
+        return False, msg
+    if p.get("owner") == "pvtd":
+        pvtd_up()                             # pvtd does its own checks, keepalives, reloads
+        return True, msg + "; pvtd started"
+    set_job(st, step="check " + p["id"])
+    ok2, msg2 = check(p)
+    return ok2, msg + "; " + msg2
+
+
+def switch(pid, who):
+    if not ID_RE.match(pid):
+        print("bad project id", file=sys.stderr)
+        return 2
+    cat, byid = load_catalog()
+    if pid not in byid:
+        print("unknown project: " + pid, file=sys.stderr)
+        return 2
+    os.makedirs(CONF["run_dir"], exist_ok=True)
+    lockf = open(os.path.join(CONF["run_dir"], "flash.lock"), "w")
+    try:
+        fcntl.flock(lockf, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        print("busy: a switch is already running", file=sys.stderr)
+        return 10
+    target, fb = byid[pid], byid[cat["fallback"]]
+    # refuse early on a bad hash, before taking the board
+    ok, why = verify(target)
+    if not ok:
+        print("refused: " + why, file=sys.stderr)
+        return 2
+    qn = CONF["queue_name"]
+    queue("join", qn, "web switch to %s (by %s)" % (pid, who))
+    rc, out = queue("take", qn)
+    if rc != 0:
+        queue("leave", qn)
+        print("busy: " + out, file=sys.stderr)
+        return 10
+    st = read_state()
+    t0 = time.time()
+    rc, note = 4, "web-flasher: board state unknown"
+    try:
+        set_job(st, target=pid, by=who, started=t0, step="start")
+        ok, msg = load(target, st)
+        log(("loaded %s: " if ok else "FAILED %s: ") % pid + msg)
+        if ok:
+            loaded, result, rc = pid, "ok", 0
+        elif pid != fb["id"]:
+            ok2, msg2 = load(fb, st)
+            log(("fell back to %s: " if ok2 else "fallback %s FAILED: ") % fb["id"] + msg2)
+            msg += " | fallback: " + msg2
+            loaded, result, rc = (fb["id"], "fallback", 3) if ok2 else (None, "failed", 4)
+        else:
+            loaded, result, rc = None, "failed", 4
+        st = read_state()
+        st.pop("job", None)
+        st.update(project=loaded, sha256=byid[loaded].get("_sha") if loaded else None,
+                  since=time.time(), by=who, result=result, message=msg)
+        st.setdefault("history", []).insert(0, dict(t=time.time(), target=pid, loaded=loaded, by=who,
+                                                    result=result, message=msg, secs=round(time.time() - t0, 1)))
+        del st["history"][50:]
+        write_state(st)
+        note = ("web-flasher: loaded %s (%s)" % (loaded, (byid[loaded].get("_sha") or "?")[:8]) if loaded
+                else "web-flasher: FLASH FAILED, board state unknown, pvtd %s" % ("down" if os.path.exists(FLAG) else "up"))
+        print(json.dumps(dict(result=result, loaded=loaded, message=msg)))
+    finally:
+        st = read_state()
+        if "job" in st:
+            st.pop("job")
+            write_state(st)
+        queue("release", qn, note)
+    return rc
+
+
+def main():
+    a = sys.argv[1:]
+    if a[:1] == ["state"]:
+        print(json.dumps(read_state(), indent=1))
+        return 0
+    if len(a) in (2, 4) and a[0] == "switch" and (len(a) == 2 or a[2] == "--by"):
+        who = a[3] if len(a) == 4 else "cli"
+        if not re.match(r"^[A-Za-z0-9._@-]{1,40}$", who):
+            return 2
+        return switch(a[1], who)
+    print(__doc__, file=sys.stderr)
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main())

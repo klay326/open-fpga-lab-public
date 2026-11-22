@@ -1,0 +1,27 @@
+[Unit]
+Description=FPGA project manager / web flasher (cm4/fpga-manager)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=fpgamgr
+Group=fpgamgr
+SupplementaryGroups=dialout plugdev fpgaq
+ExecStart=/usr/bin/python3 -I /opt/fpga-manager/fpga_manager.py --web /opt/fpga-manager/web
+Restart=always
+RestartSec=5
+# Not NoNewPrivileges: switching runs `sudo -n /usr/local/sbin/fpga-flash`
+# (the sudoers rule allows nothing else). fpga-flash inherits this unit's
+# mount namespace, so /var and /run stay writable (ProtectSystem=full).
+ProtectSystem=full
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+
+[Install]
+WantedBy=multi-user.target

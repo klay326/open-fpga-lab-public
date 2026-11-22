@@ -1,0 +1,3 @@
+# /etc/sudoers.d/fpga-manager: the web daemon may run the flasher, nothing else.
+# fpga-flash validates its arguments (catalogued id, --by name) itself.
+fpgamgr ALL=(root) NOPASSWD: /usr/local/sbin/fpga-flash switch *
