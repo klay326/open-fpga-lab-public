@@ -2,35 +2,25 @@
 
 Everything below is distilled from the actual bring-up session on Linux
 (CachyOS/Arch) -- every command, gotcha, and dead end that was real.
-Read the **blocker** section first; it affects how you plan the whole trip.
+Start with the status section; the native path is verified end to end.
 
-## Read this first: the one real blocker
+## Status: everything runs natively on Apple Silicon (verified 2026-11-22)
 
-**Vivado Lab Edition (used here for JTAG programming) has no macOS build.**
-AMD/Xilinx only ships Vivado and Vivado Lab for Windows and Linux. That's
-the tool this whole project used to flash bitstreams, because the specific
-JTAG cable on hand (a Xilinx Platform Cable USB clone, USB VID `03fd`)
-doesn't correctly implement the low-level JTAG shift protocol that
-`openFPGALoader`, `xc3sprog`, and `urjtag` all expect -- confirmed by all
-three failing identically against it.
+Build **and** flash both work on an M-series Mac with no VM, no Vivado, and
+no new cable:
 
-So on a Mac you have three real options:
+- **Toolchain**: yosys 0.68, nextpnr-xilinx `bd9c74c5` and prjxray built
+  from the pinned commits in `handoff/toolchain/VERSIONS.md` into
+  `~/opt/openxc7`. The Mac build of `fpga/blinky` is **bit-identical** to
+  the Linux build (`handoff/bitstreams/fpga-blinky.bit`); only the 9-byte
+  date/time in the `.bit` header differs.
+- **JTAG**: the Waveshare Platform Cable USB clone works with
+  openFPGALoader 1.2.0 plus a 6-line patch (`tools/openfpgaloader/`).
+  `make program` flashes a full K325T bitstream in 20 s at 12 MHz TCK.
 
-1. **Run a Linux VM** (UTM, Parallels, VMware) with USB passthrough for the
-   JTAG cable, and do the flashing step there. Everything else (LiteX
-   builds, firmware builds, CM4 flashing) can stay native on macOS.
-2. **Bring a Linux machine** for flashing only.
-3. **Get a different JTAG cable** that's actually compatible with
-   `openFPGALoader` (which does support macOS) and skip Vivado Lab on both
-   platforms. This was never tested in this project -- the cable on hand is
-   known-bad with open-source tools, but a genuine Xilinx cable or a
-   well-supported FTDI-based one would likely just work. This is the
-   cleanest long-term fix if you're willing to buy a cable, but it's a
-   research task, not a guaranteed drop-in.
-
-Decide which of these before you leave for the holidays -- it determines
-whether you need to pack a laptop that can run a VM, bring a second machine,
-or order a cable in advance.
+The old "blocker" (Vivado Lab has no macOS build, cable incompatible with
+open tools) was a misdiagnosis -- see "JTAG cable: what was actually wrong"
+below.
 
 ## The actual code
 
@@ -54,7 +44,7 @@ macOS-specific delta and the lessons learned debugging it.
 - Raspberry Pi Compute Module 4 (CM4)
 - A CM4-to-full-size-Pi adapter board with DIP switches for eMMC
   programming mode (a BigTreeTech CM4 adapter was used here)
-- The JTAG cable (see blocker above)
+- The JTAG cable (Waveshare Xilinx Platform Cable USB clone, `03fd:0013`)
 - A separate USB-to-TTL adapter for the debug console UART -- wired to the
   QMTech board's JP5 expansion header: TX/RX on ball `AE22`/`AF22` (JP5
   pins 7/8), ground shared with the JTAG header (J1 pin 6)
@@ -62,73 +52,122 @@ macOS-specific delta and the lessons learned debugging it.
 
 ## Open-source FPGA toolchain (yosys + nextpnr-xilinx + prjxray)
 
-On Linux this came from `openXC7/toolchain-installer`. On macOS, Homebrew
-has most of the build dependencies, but **this exact path was never tested
-on macOS in this project** -- treat it as the starting point, not a known-
-good recipe:
+Verified recipe (M-series, macOS, Homebrew). Installs to `~/opt/openxc7`,
+so no sudo; sources live in `~/opt/openxc7/src`. Don't use
+`openXC7/toolchain-installer` on macOS.
 
 ```bash
-brew install cmake ninja boost eigen python3 libftdi libusb pkg-config
-git clone https://github.com/openXC7/toolchain-installer
-cd toolchain-installer
-./toolchain-sources-builder.sh
-source /opt/openxc7/export.sh
+brew install cmake ninja boost eigen bison flex gawk libffi tcl-tk readline \
+    python@3.12 pypy3 pkgconf libftdi libusb hidapi zlib
+mkdir -p ~/opt/openxc7/src && cd ~/opt/openxc7/src
+
+# yosys 0.68 (Homebrew ships 0.71; build the pinned one). Needs Homebrew
+# bison/flex ahead of Apple's ancient ones.
+git clone https://github.com/YosysHQ/yosys.git && cd yosys
+git checkout 38e001a6ff74ca434bf4cc02c053f53619160ab0
+git submodule update --init --recursive
+PATH="/opt/homebrew/opt/bison/bin:/opt/homebrew/opt/flex/bin:$PATH" \
+  cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_INSTALL_PREFIX=$HOME/opt/openxc7 \
+    -DPython3_EXECUTABLE=/opt/homebrew/bin/python3.12 .
+cmake --build build && cmake --install build
+cd ..
+
+# nextpnr-xilinx bd9c74c5. Apple clang has no -fopenmp: USE_OPENMP=OFF
+# (it only speeds up the HeAP placer; output for blinky is unchanged).
+# Boost 1.92 prints FindBoost warnings; they're harmless.
+git clone https://github.com/openXC7/nextpnr-xilinx.git && cd nextpnr-xilinx
+git checkout bd9c74c5b90b65e33a5bcd1de124982441375768
+cmake -B build -G Ninja -DARCH=xilinx -DBUILD_GUI=OFF -DBUILD_PYTHON=OFF \
+  -DUSE_OPENMP=OFF -DCMAKE_BUILD_TYPE=Release \
+  -DPython3_EXECUTABLE=/opt/homebrew/bin/python3.12 .
+cmake --build build
+mkdir -p ~/opt/openxc7/bin && cp build/nextpnr-xilinx build/bbasm ~/opt/openxc7/bin/
+cd ..
+
+# prjxray-db at the pinned commit (NOT nextpnr-xilinx's submodule, which
+# points at 77e52f10). ~900 MB.
+git clone https://github.com/openXC7/prjxray-db.git
+(cd prjxray-db && git checkout 7a36171801cb7f4cae920aa0eda675a986649f6e)
+
+# prjxray: xc7frames2bit (C++) + fasm2frames (Python venv + wrapper)
+git clone https://github.com/openXC7/prjxray.git && cd prjxray
+git checkout e1302fc6f8662a237e42790073fa641f2d9f1371
+git submodule update --init --recursive
+cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_POLICY_VERSION_MINIMUM=3.5 .
+cmake --build build --target xc7frames2bit
+cp build/tools/xc7frames2bit ~/opt/openxc7/bin/
+/opt/homebrew/bin/python3.12 -m venv ~/opt/openxc7/venv
+~/opt/openxc7/venv/bin/pip install -r requirements.txt
+cat > ~/opt/openxc7/bin/fasm2frames <<EOF
+#!/bin/bash
+exec $HOME/opt/openxc7/venv/bin/python3 $HOME/opt/openxc7/src/prjxray/utils/fasm2frames.py "\$@"
+EOF
+chmod +x ~/opt/openxc7/bin/fasm2frames
+cd ..
+
+# patched openFPGALoader (see Flashing below)
+~/projects/qmtech-k7-riscv-computer/tools/openfpgaloader/build.sh
 ```
 
-Known gotchas hit on Linux that will likely recur on macOS:
+`~/opt/openxc7/export.sh`:
+```bash
+export OPENXC7=$HOME/opt/openxc7
+export PATH=$OPENXC7/bin:$PATH
+export PRJXRAY_DB_DIR=$OPENXC7/src/prjxray-db
+export NEXTPNR_XILINX_PYTHON_DIR=$OPENXC7/src/nextpnr-xilinx/xilinx/python
+export KINTEX7_CHIPDB=$HOME/projects/qmtech-k7-riscv-computer/handoff/chipdb
+export CHIPDB=$KINTEX7_CHIPDB
+```
 
-- **yosys**: the installer script assumes yosys's old Makefile build;
-  newer yosys dropped it for CMake. If the installer's yosys step fails,
-  build it directly:
-  ```bash
-  cmake -B build -DCMAKE_INSTALL_PREFIX=/opt/openxc7 .
-  cmake --build build -j$(sysctl -n hw.ncpu)
-  cmake --install build
-  ```
-- **prjxray's Python side never gets installed** (needed for
-  `fasm2frames`). Fix: a dedicated venv plus a wrapper script:
-  ```bash
-  python3 -m venv /opt/openxc7/venv
-  /opt/openxc7/venv/bin/pip install -r prjxray/requirements.txt  # adjust path
-  ```
-  then create `/opt/openxc7/bin/fasm2frames`:
-  ```bash
-  #!/bin/bash
-  exec /opt/openxc7/venv/bin/python3 /path/to/prjxray/utils/fasm2frames.py "$@"
-  ```
+**Chipdb:** reuse the committed `handoff/chipdb/xc7k325tffg676.bin` (it was
+generated at the same nextpnr-xilinx commit). It is a Git LFS object:
+`brew install git-lfs && git lfs install --local && git lfs pull` after
+cloning, or nextpnr gets a 134-byte pointer file. Expected SHA-256
+`2dd3854c29b0ed627f4167973f9a44406955b73f75ec1686498446f00b1733af`.
 
-## Flashing (Vivado Lab Edition -- Linux/VM only, see blocker)
+Known noise: fasm prints "Unable to import fast Antlr4 parser
+implementation" and falls back to the pure-Python textX parser. Harmless,
+just slower on big (LiteX) designs.
 
-1. Free AMD/Xilinx account, download **Vivado Lab Edition** (not full
-   Vivado -- much smaller, no license needed, program/debug only).
-2. On Linux: the `vivado-lab-edition` AUR package, or run the downloaded
-   `xsetup` installer with `--batch Install` directly.
-3. If it's missing `libtinfo.so.5`/`libncurses.so.5` on a newer distro,
-   copy them from the bundled `lib/lnx64.o/SuSE/` directory inside the
-   Vivado Lab install.
-4. Programming uses its Tcl interface, not the GUI:
-   ```
-   vivado_lab -mode batch -source flash.tcl
-   ```
-   Every `fpga/*/flash.tcl` and the LiteX build's generated `flash.tcl`
-   follow the same pattern:
-   ```tcl
-   open_hw_manager
-   connect_hw_server -allow_non_jtag
-   open_hw_target
-   current_hw_device [get_hw_devices xc7k325t_0]
-   refresh_hw_device -update_hw_probes false [lindex [get_hw_devices xc7k325t_0] 0]
-   set_property PROGRAM.FILE {<path-to>.bit} [get_hw_devices xc7k325t_0]
-   program_hw_devices [get_hw_devices xc7k325t_0]
-   close_hw_manager
-   ```
-   The `-allow_non_jtag` flag on `connect_hw_server` is required for this
-   cable and is easy to miss -- it was only found by diffing against the
-   GUI's own `vivado_lab.jou` journal file after a successful GUI flash.
-5. Confirm success: the Tcl output should say
-   `INFO: [Labtools 27-3164] End of startup status: HIGH`. `LOW` means the
-   bitstream didn't actually load -- usually a loose JTAG/power connection
-   (see Known Issues below).
+Build and flash a demo:
+```bash
+source ~/opt/openxc7/export.sh
+cd fpga/blinky && make && make program
+```
+
+## Flashing (openFPGALoader, patched)
+
+```bash
+openFPGALoader -c xilinxPlatformCableUsb --probe-firmware none \
+    --freq 12000000 --bitstream <file>.bit
+```
+(`make program` in any `fpga/*` project runs exactly this.) Success ends
+with `ir: 1 isc_done 1 isc_ena 0 init 1 done 1`. `done 0` means the
+bitstream didn't load -- check JTAG/power before retrying. 12 MHz takes
+20 s for a full K325T bitstream; `JTAG_FREQ=6000000` (34 s) is the fallback.
+
+### JTAG cable: what was actually wrong
+
+- The cable enumerates on macOS as **`03fd:0013`** (stock FX2 descriptors,
+  no strings). Linux recorded `03fd:0008` only *after* Vivado had loaded
+  firmware into it.
+- It **already runs XPCU firmware** at 0013: it answers vendor request
+  `0xB0`/GET_VERSION (FX2 `0x6109`, CPLD `0xfeff`, status `0x43` =
+  target connected) with no upload.
+- openFPGALoader 1.2.0 treats 0013 as "unconfigured", uploads
+  `xusb_xp2.hex` over the FX2 `0xA0` load request -- which this clone ACKs
+  and ignores (RAM readback is junk, the device never re-enumerates) --
+  then waits 100 s for 0008 and fails with `FX2: fail to open device`.
+- `tools/openfpgaloader/xpcu-skip-firmware.patch` adds
+  `--probe-firmware none`: open 0013 directly, skip the upload.
+- The original Linux failure (openFPGALoader 1.1.1) used `--board
+  qmtechKintex7`, which selects **no** cable driver (it falls back to a
+  direct FT2232 interface). It was never a JTAG shift-protocol problem.
+
+Vivado Lab (`vivado_lab -mode batch -source flash.tcl` with
+`connect_hw_server -allow_non_jtag`) still works on Linux and is the
+fallback there; the `flash.tcl` files are kept for that.
 
 ## LiteX environment
 
@@ -313,12 +352,11 @@ ssh <username>@<hostname>.local
    report -- worth a clear-headed pass with real tools if you want to push
    on it over the holidays.
 
-7. **The JTAG cable itself (VID `03fd` clone) doesn't work with
-   `openFPGALoader`/`xc3sprog`/`urjtag`** regardless of host OS -- this is
-   almost certainly going to be true on macOS too if you try those tools
-   there instead of Vivado Lab. See the blocker section at the top.
+7. **~~The JTAG cable doesn't work with open-source tools~~ -- wrong.**
+   It works with patched openFPGALoader 1.2.0; see "JTAG cable: what was
+   actually wrong" above.
 
-8. **The CM4 can't reflash the FPGA itself** -- Vivado Lab Edition has no
-   ARM64 build, and the open-source JTAG tools don't work with this cable
-   on any architecture. This is unresolved and not expected to change
-   without either a different cable or upstream JTAG tooling support.
+8. **The CM4 probably *can* reflash the FPGA** now that openFPGALoader
+   drives this cable: build `tools/openfpgaloader/build.sh`'s patch on the
+   CM4 (arm64 Linux, swap `brew` for `apt`) and plug the cable into the CM4.
+   Untested.

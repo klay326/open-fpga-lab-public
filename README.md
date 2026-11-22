@@ -2,17 +2,17 @@
 
 Bring-up and demo projects for a **QMTech XC7K325T Kintex-7 development board**,
 built entirely through an open-source FPGA toolchain (yosys + nextpnr-xilinx +
-prjxray), with flashing handled by AMD's free **Vivado Lab Edition** (no
-license required, no synthesis capability needed).
+prjxray), flashed with a (patched) **openFPGALoader** -- fully open source,
+and it runs natively on Linux and Apple Silicon macOS.
 
 The bigger goal this project is working towards: pairing this FPGA with a
 Raspberry Pi Compute Module 4 to build a small heterogeneous computer -- an
 ARM Linux side (the CM4) and a RISC-V side (synthesized into the FPGA fabric),
 talking to each other.
 
-Setting this up on a Mac? See [`MACOS-SETUP.md`](MACOS-SETUP.md) first --
-there's one real platform blocker (no macOS build of the JTAG flashing
-tool) worth planning around before anything else.
+Setting this up on a Mac? See [`MACOS-SETUP.md`](MACOS-SETUP.md) -- the
+verified native recipe (toolchain built from pinned commits, bit-identical
+output to the Linux build, JTAG flashing included).
 
 ## Board
 
@@ -35,19 +35,20 @@ Note: as of writing, the installer script doesn't correctly build `yosys`
 Python side (needed for `fasm2frames`) -- see git history / commit notes in
 this repo for the exact workarounds if you hit the same issues.
 
-**Flashing:** AMD/Xilinx account required (free) to download **Vivado Lab
-Edition** (NOT full Vivado -- it's a much smaller, license-free download that
-only does programming/debug, no synthesis). On Arch Linux, the
-[`vivado-lab-edition` AUR package](https://aur.archlinux.org/packages/vivado-lab-edition)
-handles most of the OS-compatibility patching; alternatively just run the
-downloaded `xsetup` installer directly with `--batch Install`.
-
-Programming uses Vivado Lab's Tcl interface (`vivado_lab -mode batch -source
-flash.tcl`) rather than `openFPGALoader`, because the specific JTAG cable this
-project uses (a Xilinx-VID clone) doesn't correctly implement the low-level
-JTAG shift protocol that the open-source reverse-engineered drivers
-(openFPGALoader, xc3sprog) expect -- confirmed by both failing identically
-against it. The key flag: `connect_hw_server -allow_non_jtag`.
+**Flashing:** openFPGALoader v1.2.0 plus a 6-line patch
+(`tools/openfpgaloader/build.sh`), then `make program`:
+```bash
+openFPGALoader -c xilinxPlatformCableUsb --probe-firmware none \
+    --freq 12000000 --bitstream <file>.bit
+```
+The JTAG cable (Waveshare Xilinx Platform Cable USB clone, `03fd:0013`)
+already runs its own XPCU firmware; stock openFPGALoader tries to upload
+firmware it ignores and then times out. The patch's `--probe-firmware none`
+skips that. (Earlier notes here blamed the cable's JTAG protocol -- that was
+openFPGALoader 1.1.1 run with `--board`, which selects no cable driver. See
+`MACOS-SETUP.md`.) Vivado Lab (`vivado_lab -mode batch -source flash.tcl`,
+with `connect_hw_server -allow_non_jtag`) still works on x86 Linux as a
+fallback.
 
 ## Structure
 
@@ -71,9 +72,8 @@ tapeout/
 
 ### FPGA-only demos (`fpga/`)
 
-Each directory is self-contained: `make` builds the bitstream, `vivado_lab
--mode batch -source flash.tcl` programs it (after sourcing Vivado Lab's
-`settings64.sh`).
+Each directory is self-contained: `make` builds the bitstream, `make
+program` flashes it over JTAG (`flash.tcl` is the Vivado Lab fallback).
 
 - **blinky** -- clock divider + 3 LEDs, first hardware bring-up
 - **button-chase** -- LED chase animation, SW2 pauses/resumes, SW3 reverses
