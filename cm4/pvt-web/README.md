@@ -48,16 +48,33 @@ Differences from `fpga/pvt-lab`, from testing on hardware:
 - **Droop monitor tap**: pvtd finds it at start (binary search for the edge
   nearest mid-range) because it moves with routing: 0x2C, 0x30, 0x28 in three
   builds.
-- **ro1 is still fragile.** It worked at SLICE_X145Y20 in one build (490 MHz)
-  and read 0 at the same LOC in the next, so it isn't the edge column. Each
-  ring's divided output is routed as a global clock by nextpnr; the suspect
-  is a clock-routing path that prjxray encodes wrongly. Not yet fixed.
+- **Ring divider fix (ro_monitor.v).** ro1 read 492, ~300, 0, 490 and 0 MHz
+  across builds, at both SLICE_X151Y20 and SLICE_X145Y20. The cause: the
+  ring net (500-600 MHz) ran to an unpinned toggle FF and on as a clock, and
+  long routes swallowed edges. Now two `clkbuf_inhibit` toggle stages divide
+  by 4 next to the ring (as in pvt-lab's ro_grid.v), and the count is doubled
+  so the line format stays the same. ro1 is back at SLICE_X151Y20 and runs at
+  625 MHz.
 
 Each new `playground.bit` restarts the RO self-calibration: `install.sh`
 writes `/var/lib/pvtd/calib_epoch` and pvtd fits only samples after it.
 
 `fpga/` holds the earlier read-only design (xadc-monitor stream mirrored to
 A15). It's no longer needed.
+
+Also from pvt-lab v6 (the XADC session's work):
+
+- **Die map** (`ro_grid.v`): 64 rings in an 8x8 grid, read one at a time,
+  `G ff c0..c63` every 0.34 s, f = 8*c*50e6/2^18, index row*8+col with row 0
+  at the bottom. On this build all 64 run, at 417-611 MHz.
+- **Supply-noise scope** (`scope.v`): `Od` captures 16384 droop-monitor
+  samples at 25 MS/s / 2^d into block RAM, dumped as `Q lll s0..s15`
+  (16 x mean tap position) in about 8 s.
+
+Measured on this build: with the heater off, ripple at ~79 kHz and 9.5 taps
+rms (the regulator). At full heater, the heater's tone at 1.953 MHz
+(100 MHz / 256 x 5 groups) and 5.1 taps rms. IR drop at full heater runs
+from -22.5k ppm (centre-top) to -30.6k ppm (bottom row).
 
 ## pvtd (`pvtd.py`, Python 3 stdlib only)
 
@@ -81,8 +98,9 @@ A15). It's no longer needed.
 | `GET /` | the page (`web/index.html`) |
 | `GET /api/now` | everything live |
 | `GET /api/history?h=24` | downsampled history (max 720 h) |
+| `GET /api/scope` | last scope capture: trace, spectrum (1024 max-hold bins), top peaks |
 | `GET /api/trng/random` | 32 bytes: SHA-256 over the raw bits received since the last call |
-| `POST /api/control` | `{"action": ...}`: `heater {duty 0-255}`, `hold {temp_c 30-65}`, `off`, `quiet {on}`, `clear`, `droop {tap 0-63}`, `trng {run}`, `trng_rate {div 0-9}`, `trng_clear` |
+| `POST /api/control` | `{"action": ...}`: `heater {duty 0-255}`, `hold {temp_c 30-65}`, `off`, `quiet {on}`, `clear`, `droop {tap 0-63}`, `trng {run}`, `trng_rate {div 0-9}`, `trng_clear`, `ir_map`, `scope {dec 0-8, load}` |
 
 The control API is public on purpose (the user's choice). What limits it:
 
