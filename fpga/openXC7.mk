@@ -46,7 +46,9 @@ JTAG_CABLE ?= xilinxPlatformCableUsb
 JTAG_FREQ ?= 12000000
 OPENXC7_MK_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 JTAG_FIRMWARE ?= $(abspath $(OPENXC7_MK_DIR)../handoff/cable/xusb_hex/xusb_xp2.hex)
-JTAG_LINK ?= -c ${JTAG_CABLE} --freq ${JTAG_FREQ} --probe-firmware ${JTAG_FIRMWARE}
+# xusb_xp2.hex is Xilinx's (from an ISE/Vivado install; not redistributable),
+# so it's optional: only passed when present.
+JTAG_LINK ?= -c ${JTAG_CABLE} --freq ${JTAG_FREQ} $(if $(wildcard ${JTAG_FIRMWARE}),--probe-firmware ${JTAG_FIRMWARE})
 
 XDC ?= ${PROJECT}.xdc
 
