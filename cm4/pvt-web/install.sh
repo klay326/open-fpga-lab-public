@@ -34,7 +34,15 @@ install -m 644 "$HERE/pvtd.py" /opt/pvtd/pvtd.py
 install -m 644 "$HERE/web/index.html" /opt/pvtd/web/index.html
 # The playground bitstream: pvtd reloads it over JTAG if the FPGA loses its
 # configuration (power cycle). Build it first (playground/, make).
-[ -f "$HERE/playground/playground.bit" ] && install -m 644 "$HERE/playground/playground.bit" /usr/local/share/pvtd/playground.bit
+NEWBIT="$HERE/playground/playground.bit"; OLDBIT=/usr/local/share/pvtd/playground.bit
+if [ -f "$NEWBIT" ] && ! cmp -s "$NEWBIT" "$OLDBIT"; then
+    install -m 644 "$NEWBIT" "$OLDBIT"
+    # new placement = new RO frequencies: restart the self-calibration from now
+    install -d -o pvtd -g pvtd /var/lib/pvtd 2>/dev/null || install -d /var/lib/pvtd
+    date +%s > /var/lib/pvtd/calib_epoch
+    rm -f /var/lib/pvtd/calib_auto.json
+    echo "new playground.bit: RO calibration restarts (flash it, e.g. pvtd reloads it if the FPGA is silent)"
+fi
 # Ring-oscillator calibration: pvtd fits its own against the XADC
 # (/var/lib/pvtd/calib_auto.json). A pvt-lab calib.json only matches the
 # pvt-lab bitstream it was swept on, so it is NOT installed for the playground;

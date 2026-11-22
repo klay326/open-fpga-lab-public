@@ -67,7 +67,9 @@ module pvt_lab #(
     localparam NRO = 5;
     wire [24*NRO-1:0] ro_cnt;
     ro_monitor #(.LOC("SLICE_X0Y20"))    ro0 (.clk(clk), .en(!rst), .count(ro_cnt[ 0+:24]));
-    ro_monitor #(.LOC("SLICE_X151Y20"))  ro1 (.clk(clk), .en(!rst), .count(ro_cnt[24+:24]));
+    // playground: ro1 moved in from SLICE_X151Y20 (right-most column), where it
+    // read 300 MHz, then 0, depending on routing (see cm4/pvt-web/README.md).
+    ro_monitor #(.LOC("SLICE_X145Y20"))  ro1 (.clk(clk), .en(!rst), .count(ro_cnt[24+:24]));
     ro_monitor #(.LOC("SLICE_X80Y170"))  ro2 (.clk(clk), .en(!rst), .count(ro_cnt[48+:24]));
     ro_monitor #(.LOC("SLICE_X0Y320"))   ro3 (.clk(clk), .en(!rst), .count(ro_cnt[72+:24]));
     ro_monitor #(.LOC("SLICE_X145Y320")) ro4 (.clk(clk), .en(!rst), .count(ro_cnt[96+:24]));

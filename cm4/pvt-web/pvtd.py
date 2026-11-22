@@ -633,7 +633,14 @@ class Pvtd:
                 self.last_lab = time.time()
 
     def refit(self):
-        rows = self.store.calib_rows(time.time() - 7 * 86400)
+        # only samples from the current bitstream (install.sh writes calib_epoch
+        # when playground.bit changes, because routing moves the RO frequencies)
+        since = time.time() - 7 * 86400
+        try:
+            since = max(since, float(open(os.path.join(os.path.dirname(self.args.db), "calib_epoch")).read()))
+        except (OSError, ValueError):
+            pass
+        rows = self.store.calib_rows(since)
         if len(rows) < 60 or max(r[0] for r in rows) - min(r[0] for r in rows) < 8:
             return
         try:
@@ -786,8 +793,8 @@ def main():
     ap.add_argument("--bitstream", default="/usr/local/share/pvtd/playground.bit",
                     help="reloaded over JTAG if the FPGA goes quiet ('' = never)")
     ap.add_argument("--calib", default="/etc/pvtd/calib.json")
-    ap.add_argument("--droop-tap", type=lambda v: int(v, 0), default=0x2C,
-                    help="droop-monitor delay tap set at start (0x2C puts the edge mid-range on playground.bit)")
+    ap.add_argument("--droop-tap", type=lambda v: int(v, 0), default=0x30,
+                    help="droop-monitor delay tap set at start (0x30 puts the edge mid-range on the current playground.bit; re-sweep after a rebuild)")
     ap.add_argument("--tmax", type=float, default=72.0, help="heater cut-off, C")
     ap.add_argument("--max-hold", type=int, default=60, help="highest hold setpoint, C")
     ap.add_argument("--lease", type=float, default=600, help="s a heater/hold session lasts")

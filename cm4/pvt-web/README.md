@@ -33,6 +33,19 @@ source ~/opt/openxc7/export.sh
 cd cm4/pvt-web/playground && make && make program JTAG_FREQ=1500000
 ```
 
+Differences from `fpga/pvt-lab`, from testing on hardware:
+
+- **ro1 moved to `SLICE_X145Y20`.** At `SLICE_X151Y20` (the right-most column)
+  it measured 492 MHz in xadc-monitor, ~300 MHz in pvt_web and pvt-lab v4, and
+  0 in the first playground build. nextpnr's timing for it was normal every
+  time. The likely cause is a routing resource in that edge tile that
+  prjxray-db doesn't describe correctly; this hasn't been proven.
+- **Droop monitor tap 0x30** (pvtd `--droop-tap`, set at start). It depends on routing: 0x2C in the first playground build, 0x30 after the ro1 move; taps below it saturate
+  at 256.
+
+Each new `playground.bit` restarts the RO self-calibration: `install.sh`
+writes `/var/lib/pvtd/calib_epoch` and pvtd fits only samples after it.
+
 `fpga/` holds the earlier read-only design (xadc-monitor stream mirrored to
 A15). It's no longer needed.
 
