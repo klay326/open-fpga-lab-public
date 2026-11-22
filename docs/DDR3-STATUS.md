@@ -60,6 +60,31 @@ that differ from build to build in logic (CPU, IRQ) that has nothing to do
 with DDR3. None of the 6 `IOB_COL_*` bits collide with a *known* `INT_R`
 feature, but the db only knows the bits someone has identified.
 
+## Ground truth from Vivado (done 2026-11-22)
+
+QMTech's Vivado 2018.3 MIG example (`Test04_DDR3_mig_7series_0_3_ex_.zip`,
+`impl_2/example_top.bit`: DDR3-800, x16, 4:1 PHY, LED0/R26 =
+`init_calib_complete`, LED1/P26 = `tg_compare_error`) flashes fine with
+openFPGALoader. I decoded it with prjxray `bit2fasm` (HEAD db) and
+compared it with nextpnr's DDR3 `.fasm`. The DDR3 IO tiles match
+(`RIOB18_X95Y101..Y147`):
+
+| feature | Vivado, DDR3 column | nextpnr |
+|---|---|---|
+| `IOB_COL_BANK_ACTIVE` | 23 tiles | 21 tiles (20 match) |
+| `IOB_COL_OBUF_CASCADE_Y1` | **1 tile** (`INT_R_X95Y137`) | **21 tiles** |
+| `OBUF_HP_BANK_GLUE` | **1 site** (`RIOB18_X95Y137.IOB_Y1`) | **47 sites** |
+
+The `OBUF_CASCADE_Y1` bit pattern (`30_041 32_016 33_061`) also decodes in
+71 ordinary fabric INT tiles of the Vivado design, nowhere near IO. So those
+bits overlap real routing PIPs, and nextpnr setting them in 20 extra
+`INT_R_X95` tiles turns on 20 stray routing connections. That's the best
+explanation for the CPU corruption so far.
+
+`ddr3-fixed.bit` is the nextpnr DDR3 `.fasm` (100 MHz build) with the 66
+over-applied lines dropped: everything except the one tile and one site
+Vivado sets. It hasn't been flashed yet.
+
 ## Next experiments, cheapest first
 
 1. **Strip-and-flash:** regenerate the DDR3 `.frames` with the 42 `INT_R.IOB_COL_*`
