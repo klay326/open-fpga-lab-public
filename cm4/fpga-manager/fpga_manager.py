@@ -249,7 +249,8 @@ class Manager:
             if not ok:
                 return 429, why
         holder, q, _ = self.queue()
-        if holder or q:
+        # a slot can be reserved for the web with `fpga-queue join web-flasher "..."`
+        if holder or (q and q[0]["name"] != "web-flasher"):
             return 409, "board busy: %s" % ("held by " + holder["name"] if holder else q[0]["name"] + " is waiting")
         with self.lock:
             if self.job:

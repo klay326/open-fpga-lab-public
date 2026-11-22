@@ -80,6 +80,10 @@ the hashes again on the Pi, and `fpga-flash` checks them before every flash.
   - the CM4 UART in `panel`/`health`, read-only (tail shown on the page)
   - `health: uart_line`: no matching line for 3 x `within_s` -> fallback
   - fallbacks happen at most once per 15 min
+- **Switching while others wait:** the web refuses while anyone holds the
+  board or waits ahead of it. To give the web a turn in line, run
+  `fpga-queue join web-flasher "why"`. When web-flasher reaches the front and
+  the board is free, the next web switch goes ahead and uses that slot.
 - **Someone else holds the queue:** fpga-manager doesn't touch JTAG or
   UARTs, and switches are refused. If someone other than web-flasher held
   the board after the last web switch, the page says the board may hold

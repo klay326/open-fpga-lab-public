@@ -144,7 +144,7 @@ function renderPanel(){
   <p class="mute" style="font-size:13px">Its output isn't visible from the CM4. Talk to it from the Mac on JP5.</p>`;
 }
 function renderProjects(){
-  const can=S.user&&!S.job&&!S.holder&&!(S.queue||[]).length;
+  const q0=(S.queue||[])[0];const can=S.user&&!S.job&&!S.holder&&(!q0||q0.name==="web-flasher");
   $("projects").innerHTML=S.projects.map(p=>`<div class="proj ${p.id===S.loaded?"cur":""}">
     <div style="display:flex;justify-content:space-between;gap:8px;align-items:baseline"><h3>${esc(p.name)}</h3>${p.id===S.loaded?'<span class="pill ok">loaded</span>':""}</div>
     <p>${esc(p.description)}</p>

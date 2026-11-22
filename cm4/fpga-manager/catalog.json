@@ -12,12 +12,26 @@
       "trust": "root-owned",
       "sha256": null,
       "uarts": [
-        {"where": "CM4 /dev/serial0", "baud": 115200, "pins": "A15 -> GPIO15, C17 <- GPIO14", "speaks": "pvt_lab text lines (R ... H ... M ...), commands + K keepalive"},
-        {"where": "CM4 /dev/ttyAMA3", "baud": 1000000, "pins": "C11 -> GPIO5, E18 <- GPIO4", "speaks": "TRNG raw bits; single-byte commands 0-9 C S G"}
+        {
+          "where": "CM4 /dev/serial0",
+          "baud": 115200,
+          "pins": "A15 -> GPIO15, C17 <- GPIO14",
+          "speaks": "pvt_lab text lines (R ... H ... M ...), commands + K keepalive"
+        },
+        {
+          "where": "CM4 /dev/ttyAMA3",
+          "baud": 1000000,
+          "pins": "C11 -> GPIO5, E18 <- GPIO4",
+          "speaks": "TRNG raw bits; single-byte commands 0-9 C S G"
+        }
       ],
       "owner": "pvtd",
-      "panel": {"type": "pvtd"},
-      "health": {"type": "pvtd"}
+      "panel": {
+        "type": "pvtd"
+      },
+      "health": {
+        "type": "pvtd"
+      }
     },
     {
       "id": "pvt-lab",
@@ -26,11 +40,31 @@
       "source": "fpga/pvt-lab/pvt_lab_v4.bit",
       "sha256": "809b057e3e4f0e0764b343f18b08a6129aee10a5d927273c384af18d030a1708",
       "uarts": [
-        {"where": "JP5 (Mac USB-UART)", "baud": 115200, "pins": "AE22 TX, AF22 RX", "speaks": "pvt_lab text lines and commands (pvt_lab.py)"},
-        {"where": "CM4 /dev/serial0 (RX only)", "baud": 115200, "pins": "A15 -> GPIO15", "speaks": "mirror of the JP5 status line"}
+        {
+          "where": "JP5 (Mac USB-UART)",
+          "baud": 115200,
+          "pins": "AE22 TX, AF22 RX",
+          "speaks": "pvt_lab text lines and commands (pvt_lab.py)"
+        },
+        {
+          "where": "CM4 /dev/serial0 (RX only)",
+          "baud": 115200,
+          "pins": "A15 -> GPIO15",
+          "speaks": "mirror of the JP5 status line"
+        }
       ],
-      "panel": {"type": "serial_tail", "port": "/dev/serial0", "baud": 115200},
-      "health": {"type": "uart_line", "port": "/dev/serial0", "baud": 115200, "match": "^R( [0-9A-Fa-f]+){5}", "within_s": 30}
+      "panel": {
+        "type": "serial_tail",
+        "port": "/dev/serial0",
+        "baud": 115200
+      },
+      "health": {
+        "type": "uart_line",
+        "port": "/dev/serial0",
+        "baud": 115200,
+        "match": "^R( [0-9A-Fa-f]+){5}",
+        "within_s": 30
+      }
     },
     {
       "id": "trng",
@@ -39,10 +73,19 @@
       "source": "fpga/trng/trng.bit",
       "sha256": "1878fd605c362f97835f1367cceeb83c55fde82fa75b8f36acbc8708c5f946a0",
       "uarts": [
-        {"where": "JP5 (Mac USB-UART)", "baud": 1000000, "pins": "AE22 TX, AF22 RX", "speaks": "raw bits, binary; commands 0-9 C S G (fpga/trng/trng_test.py)"}
+        {
+          "where": "JP5 (Mac USB-UART)",
+          "baud": 1000000,
+          "pins": "AE22 TX, AF22 RX",
+          "speaks": "raw bits, binary; commands 0-9 C S G (fpga/trng/trng_test.py)"
+        }
       ],
-      "panel": {"type": "info"},
-      "health": {"type": "none"}
+      "panel": {
+        "type": "info"
+      },
+      "health": {
+        "type": "none"
+      }
     },
     {
       "id": "litex-cm4-uart",
@@ -51,23 +94,48 @@
       "source": "handoff/bitstreams/litex-cm4-uart.bit",
       "sha256": "dd7bd690aab78d63543daee488aa356f2500081570a8da1b153e91a74ce9eba6",
       "uarts": [
-        {"where": "CM4 /dev/serial0", "baud": 115200, "pins": "GPIO14/15", "speaks": "LiteX BIOS console (litex_term --serial-boot on the CM4)"},
-        {"where": "JP5 (Mac USB-UART)", "baud": 115200, "pins": "AE22 TX, AF22 RX", "speaks": "LiteX debug UART"}
+        {
+          "where": "CM4 /dev/serial0",
+          "baud": 115200,
+          "pins": "GPIO14/15",
+          "speaks": "LiteX BIOS console (litex_term --serial-boot on the CM4)"
+        },
+        {
+          "where": "JP5 (Mac USB-UART)",
+          "baud": 115200,
+          "pins": "AE22 TX, AF22 RX",
+          "speaks": "LiteX debug UART"
+        }
       ],
-      "panel": {"type": "serial_tail", "port": "/dev/serial0", "baud": 115200},
-      "health": {"type": "none"}
+      "panel": {
+        "type": "serial_tail",
+        "port": "/dev/serial0",
+        "baud": 115200
+      },
+      "health": {
+        "type": "none"
+      }
     },
     {
       "id": "ddr3-test",
       "name": "DDR3 test",
       "description": "UberDDR3 controller memory test on the board's DDR3. Results come out of the JP5 UART bridge at 9600 8N1; the CM4 can't see them.",
       "source": "fpga/ddr3-test/qmtech_ddr3.bit",
-      "sha256": "fd4d8dfff7d2e2c322ecda1074f4b84a8b23f5c3d1beb2e88a06a8568189115f",
+      "sha256": "ede7982ff91e6a1b3c95beaed35b32a49ad63128bb63ae0031d83d511e139fcf",
       "uarts": [
-        {"where": "JP5 (Mac USB-UART)", "baud": 9600, "pins": "AE22 TX, AF22 RX", "speaks": "test report text (fpga/ddr3-test/test.py)"}
+        {
+          "where": "JP5 (Mac USB-UART)",
+          "baud": 9600,
+          "pins": "AE22 TX, AF22 RX",
+          "speaks": "test report text (fpga/ddr3-test/test.py)"
+        }
       ],
-      "panel": {"type": "info"},
-      "health": {"type": "none"}
+      "panel": {
+        "type": "info"
+      },
+      "health": {
+        "type": "none"
+      }
     }
   ]
 }

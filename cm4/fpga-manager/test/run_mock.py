@@ -250,6 +250,15 @@ try:
     ok(s["last_result"]["rc"] == 2, "writable playground.bit refused")
     os.chmod(os.path.join(T, "pvtd-share", "playground.bit"), 0o644)
 
+    # 6c. a slot reserved for web-flasher in the queue is usable; someone else ahead is not
+    time.sleep(1.1)
+    queue("join", "someone", "x"); queue("join", "web-flasher", "reserved")
+    ok(req("POST", "/manager/api/switch", {"project": "trng"}, cookie=ck)[0] == 409, "refused while someone waits ahead of web-flasher")
+    queue("leave", "someone")
+    code, d, _ = req("POST", "/manager/api/switch", {"project": "trng"}, cookie=ck)
+    s = wait_idle()
+    ok(code == 202 and s["loaded"] == "trng" and not s["queue"], "reserved web-flasher slot used")
+
     # 7. rate limit
     time.sleep(1.1)
     req("POST", "/manager/api/switch", {"project": "trng"}, cookie=ck)
