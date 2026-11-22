@@ -35,9 +35,12 @@ _io = [
         Subsignal("rx", Pins("JP5:8")),
         IOStandard("LVCMOS33")
     ),
+    # FPGA-side names: the FPGA transmits on the CM4's RXD0 (GPIO15) and
+    # receives on the CM4's TXD0 (GPIO14). (Was tx=GPIO:14/rx=GPIO:15: both
+    # sides drove GPIO14 and the CM4 heard nothing -- verified 2026-11-22.)
     ("gpio_serial", 0,
-        Subsignal("tx", Pins("GPIO:14")),
-        Subsignal("rx", Pins("GPIO:15")),
+        Subsignal("tx", Pins("GPIO:15")),
+        Subsignal("rx", Pins("GPIO:14")),
         IOStandard("LVCMOS33")
     ),
 

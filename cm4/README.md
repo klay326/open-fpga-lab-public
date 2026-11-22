@@ -77,10 +77,40 @@ build with anything high-throughput.
    machine), or use `cm4_link.py` here for a quick manual poke at the
    console.
 
-Still to verify: the actual GPIO14/15 <-> CM4 wiring end to end (steps
-above are written but not yet run against real hardware -- the FPGA-side
-UART and firmware pairing is confirmed working, but nothing has talked to
-it from the CM4 side yet).
+### Verified end to end (2026-11-22)
+
+Both directions work over GPIO14/15 at 115200 8N1, checked with no firmware
+(BIOS prompt on JP5, `cm4_uart` driven by hand with `mem_write`/`mem_read`):
+- FPGA -> CM4: `mem_write 0xf0000000 <byte>` (CM4_UART RXTX), received
+  byte-exact on the CM4 with `stty -F /dev/serial0 115200 raw; cat /dev/serial0`.
+- CM4 -> FPGA: `printf "PI!" > /dev/serial0`, read back on the FPGA with
+  `mem_read 0xf0000008` (RXEMPTY), `mem_read 0xf0000000` (RXTX),
+  `mem_write 0xf0000010 0x2` (EV_PENDING, pop) per byte.
+
+Three things had to be fixed to get there:
+1. **TX/RX were swapped** in `gpio_serial`: the FPGA transmitted on GPIO14,
+   which is the CM4's own TXD0, so both sides drove GPIO14 and the CM4 heard
+   nothing. Now FPGA tx = GPIO:15 (ball A15), rx = GPIO:14 (ball C17).
+2. **The SoC script imported litex-boards' platform**, where `gpio_serial`
+   is commented out, so `--with-cm4-uart` failed on a clean checkout. It now
+   imports `litex-soc/qmtech_kintex7_devboard_platform.py`.
+3. **Build it at `--sys-clk-freq 50e6`.** At 100 MHz nextpnr reports ~73-91
+   MHz and the BIOS floods `*** disabled spurious irq 3 ***` (there is no
+   IRQ 3; the CPU misbehaves). At 50 MHz it passes timing (83 MHz) and runs
+   clean. This is likely Bug 2 above as well.
+
+```bash
+python3 ../litex-soc/qmtech_kintex7_devboard.py --toolchain=openxc7 \
+    --integrated-main-ram-size=0x8000 --with-cm4-uart --sys-clk-freq 50e6 --build
+```
+`handoff/bitstreams/litex-cm4-uart.bit` is this build. Firmware must be
+rebuilt against this build's headers (different clock and CSR map).
+
+CM4 side as done: `enable_uart=1` + `dtoverlay=disable-bt` in
+`/boot/firmware/config.txt`, `console=serial0,115200` removed from
+`cmdline.txt` (backups `*.bak-20261122-134650`). `/dev/serial0` ->
+`ttyAMA0`, PL011 on GPIO14/15. No pyserial on the Pi; `cm4_link.py` needs
+`sudo apt install python3-serial`.
 
 ### Files here
 

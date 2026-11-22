@@ -11,7 +11,9 @@
 import os
 from migen import *
 
-from litex_boards.platforms import qmtech_kintex7_devboard
+# The repo's own copy of the litex-boards platform: same pins, plus the CM4
+# gpio_serial resource (commented out upstream) that --with-cm4-uart needs.
+import qmtech_kintex7_devboard_platform as qmtech_kintex7_devboard
 
 from litex.soc.cores.clock import *
 from litex.soc.integration.soc import *
