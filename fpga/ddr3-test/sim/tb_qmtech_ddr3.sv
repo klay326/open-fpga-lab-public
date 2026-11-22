@@ -26,7 +26,8 @@ module tb;
         .ROW_BITS(14), .COL_BITS(10), .BA_BITS(3), .BYTE_LANES(2),
         .AUX_WIDTH(16), .WB2_ADDR_BITS(32), .WB2_DATA_BITS(32),
         .SPEED_BIN(`SIM_SPEED_BIN), .SDRAM_CAPACITY(`SIM_CAPACITY), .MICRON_SIM(1),
-        .ODELAY_SUPPORTED(0), .SECOND_WISHBONE(0), .BIST_MODE(`SIM_BIST)
+        .ODELAY_SUPPORTED(0), .SECOND_WISHBONE(0), .BIST_MODE(`SIM_BIST),
+        .DIC(2'b01), .RTT_NOM(3'b001)
     ) dut (
         .i_controller_clk(ctrl_clk), .i_ddr3_clk(ddr_clk), .i_ref_clk(ref_clk),
         .i_ddr3_clk_90(ddr_clk_90), .i_ddr3_clk_180(ddr_clk_180), .i_rst_n(rst_n),

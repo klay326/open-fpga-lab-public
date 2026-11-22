@@ -217,6 +217,31 @@ in simulation (board flight time vs IDELAY sweep range; try SPEED_BIN 3
 and a different read-delay start; log `dqs_start_index` / idelay taps over
 the UART).
 
+### Offline round: why the board fails where the sim passes (2026-11-22)
+
+- **Trace delay isn't it.** `sim/run.sh` has `BUS=<ps>` (Micron model delay
+  on every DRAM pin, each way). Calibration reaches DONE at 0, 250, 500, 750,
+  1000 and 1500 ps; longer delays only take longer to lock.
+- **FPGA-side read termination is missing.** Vivado's MIG on this board uses
+  DCI on DQ/DQS (`dci_inouts_inputs=1`, IOBUF_DCIEN), so the read lines are
+  terminated at the FPGA. prjxray-db has no DCI termination features (only
+  the per-pin `DCITERMDISABLE` mux), and HP banks have no `IN_TERM`
+  fallback, so the open flow leaves the read lines unterminated at the FPGA.
+  This is the leading suspect for read calibration failing on the board.
+- **DRAM-side drive and ODT now match MIG.** `DIC=2'b01` (RZQ/7, 34 ohm) and
+  `RTT_NOM=3'b001` (RZQ/4, 60 ohm), instead of UberDDR3's RZQ/6 defaults.
+  Sim still reaches DONE. Not yet tried on the board.
+- **Board-side visibility:** `make CAL_DEBUG=1` builds with UberDDR3's
+  `UART_DEBUG_READ_LEVEL`. JP5 TX then prints every read-calibration step
+  (dqs_start_index, repeat counts, "Glitch: Reached End") at 9600 8N1,
+  instead of serving the UART bridge. Its debug UART is renamed
+  `uber_uart_tx` to avoid clashing with the bridge's `uart_tx`.
+
+Next on the board: flash the normal build (MIG drive/ODT) and see whether
+read calibration locks. If not, flash `CAL_DEBUG=1` and read the log. If
+termination is the cause, options are a lower DDR clock (DLL-off mode) or
+adding DCI support to prjxray (fuzz the HCLK_IOI/IOB DCI bits).
+
 ### Pad read-back probes (2026-11-22)
 
 With no scope available, the control, address and bank outputs (and CK)

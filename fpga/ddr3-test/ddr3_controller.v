@@ -47,6 +47,7 @@
 //`define DDR3_1066_7_7_7 
 //
 // Choose which debug message will be displayed via UART:
+`include "build_config.vh"   // QMTech: `make CAL_DEBUG=1` defines UART_DEBUG_READ_LEVEL here
 // `define UART_DEBUG_READ_LEVEL
 // `define UART_DEBUG_WRITE_LEVEL
 // `define UART_DEBUG_ALIGN
@@ -3513,7 +3514,7 @@ ALTERNATE_WRITE_READ: if(!o_wb_stall_calib) begin
             end
         endfunction
 
-        uart_tx #(
+        uber_uart_tx #(   // QMTech: renamed (our UART bridge also has a uart_tx)
                 .BIT_RATE(MICRON_SIM? (((1_000_000/CONTROLLER_CLK_PERIOD) * 1_000_000)/1) : 9600), // fast UART during simulation
                 .CLK_HZ( (1_000_000/CONTROLLER_CLK_PERIOD) * 1_000_000),
                 .PAYLOAD_BITS(8),

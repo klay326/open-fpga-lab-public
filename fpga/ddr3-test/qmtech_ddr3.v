@@ -1,4 +1,5 @@
 `timescale 1ns / 1ps
+`include "build_config.vh"   // `make CAL_DEBUG=1`: JP5 TX carries the controller's calibration log
 `default_nettype none
 // DDR3 round-trip test for the QMTech XC7K325T dev board -- no LiteX, no CPU.
 //
@@ -80,6 +81,7 @@ module qmtech_ddr3 (
     wire [63:0] o_debug1;
     wire [31:0] o_debug2, o_debug3;
     wire        calib_complete;
+    wire        bridge_tx, cal_dbg_tx;
     reg  [63:0] rd_snap = 0;      // read_lane_data at first entry to state 14 since '#'
     reg         rd_snap_valid = 0;
     reg  [2:0]  rd_ptr = 0;       // '[' -> next snapshot byte (LSB first), ']' -> rewind
@@ -174,7 +176,7 @@ module qmtech_ddr3 (
         .s_axis_tdata(dbg_valid ? dbg_data : o_wb_data),
         .s_axis_tvalid(o_wb_ack | dbg_valid), .s_axis_tready(),
         .m_axis_tdata(rd_data), .m_axis_tvalid(m_axis_tvalid), .m_axis_tready(1'b1),
-        .rxd(rx), .txd(tx),
+        .rxd(rx), .txd(bridge_tx),
         .prescale(16'd1085)   // 83.333 MHz / (9600 * 8)
     );
 
@@ -230,7 +232,9 @@ module qmtech_ddr3 (
         .MICRON_SIM(0),
         .ODELAY_SUPPORTED(0),     // HP bank has ODELAYE2, but prjxray-db has no feature routing its output back to the pad, so use the 90-deg-clock scheme
         .SECOND_WISHBONE(0),
-        .BIST_MODE(1)             // calibration includes one full-memory write/read BIST
+        .BIST_MODE(1),            // calibration includes one full-memory write/read BIST
+        .DIC(2'b01),              // DRAM drive RZQ/7 (34 ohm) and ...
+        .RTT_NOM(3'b001)          // ... ODT RZQ/4 (60 ohm): what Vivado's MIG uses on this board
     ) ddr3_top (
         .i_controller_clk(i_controller_clk), .i_ddr3_clk(i_ddr3_clk),
         .i_ref_clk(i_ref_clk), .i_ddr3_clk_90(i_ddr3_clk_90), .i_ddr3_clk_180(i_ddr3_clk_180),
@@ -252,8 +256,15 @@ module qmtech_ddr3 (
         .o_calib_complete(calib_complete),
         .o_debug1(o_debug1),
         .i_user_self_refresh(1'b0),
-        .uart_tx()
+        .uart_tx(cal_dbg_tx)
     );
+    // JP5 TX: the UART bridge normally; the controller's read-calibration log
+    // (9600 8N1 text, UberDDR3 UART_DEBUG_READ_LEVEL) in CAL_DEBUG builds.
+`ifdef UART_DEBUG_READ_LEVEL
+    assign tx = cal_dbg_tx;
+`else
+    assign tx = bridge_tx;
+`endif
     assign o_debug2 = 32'd0, o_debug3 = 32'd0;   // upstream controller has no debug2/3
 
     // ---------------- status LEDs (active-low) ----------------
