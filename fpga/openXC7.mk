@@ -29,17 +29,21 @@ PNR_DEBUG ?= # --verbose --debug
 
 BOARD ?= UNKNOWN
 
-# JTAG: the Waveshare Xilinx Platform Cable USB clone (03fd:0013). It boots its
-# own XPCU firmware; stock openFPGALoader <= 1.2.0 tries to upload firmware,
-# which this cable ignores, and times out. tools/openfpgaloader/build.sh builds
-# the fix (upstream PR trabucayre/openFPGALoader#772) into ~/opt/openxc7/bin.
+# JTAG: the Waveshare Xilinx Platform Cable USB clone (03fd:0013). It runs the
+# uploaded XPCU firmware but never re-enumerates as 0008, so stock
+# openFPGALoader <= 1.2.0 times out. tools/openfpgaloader/build.sh builds the
+# fix (upstream PR trabucayre/openFPGALoader#772) into ~/opt/openxc7/bin. The
+# firmware is lost on USB power loss; JTAG_FIRMWARE re-uploads it (and is
+# skipped while it's still running).
 # `--board ${BOARD}` alone selects no cable driver and fails -- that was the
 # original "cable doesn't work with openFPGALoader" result.
 # Override, e.g.: make program JTAG_LINK="-c digilent_hs2"
 JTAG_CABLE ?= xilinxPlatformCableUsb
 # 12 MHz: 20 s per full K325T bitstream (verified, DONE=1); 6000000 = 34 s
 JTAG_FREQ ?= 12000000
-JTAG_LINK ?= -c ${JTAG_CABLE} --freq ${JTAG_FREQ}
+OPENXC7_MK_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
+JTAG_FIRMWARE ?= $(abspath $(OPENXC7_MK_DIR)../handoff/cable/xusb_hex/xusb_xp2.hex)
+JTAG_LINK ?= -c ${JTAG_CABLE} --freq ${JTAG_FREQ} --probe-firmware ${JTAG_FIRMWARE}
 
 XDC ?= ${PROJECT}.xdc
 

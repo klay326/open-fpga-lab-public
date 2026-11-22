@@ -4,11 +4,11 @@
 # ~/opt/openxc7/bin/openFPGALoader (ahead of Homebrew's on PATH after
 # sourcing ~/opt/openxc7/export.sh).
 #
-# Why: the Waveshare Platform Cable USB clone enumerates as 03fd:0013 but
-# already runs XPCU firmware. Stock openFPGALoader treats 0013 as "needs
-# firmware", uploads xusb_xp2.hex (ACKed, ignored), then waits forever for
-# 03fd:0008. The fix probes XPCU GET_VERSION first and skips the upload if
-# the cable answers. Plain `-c xilinxPlatformCableUsb` then just works.
+# Why: the Waveshare Platform Cable USB clone enumerates as 03fd:0013. It
+# runs the uploaded xusb_xp2.hex but never re-enumerates as 03fd:0008, so
+# stock openFPGALoader waits 100 s for 0008 and fails. The fix opens 0013
+# once GET_VERSION answers after the upload (3 s fallback), and skips the
+# upload entirely while the firmware is still in RAM (until a power loss).
 # Once #772 is merged and released, `brew install openfpgaloader` is enough.
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"

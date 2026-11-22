@@ -1,7 +1,7 @@
 From bb0c204c4f3c72edf436656a7452acdf43840bf5 Mon Sep 17 00:00:00 2001
 From: Klay Adams <29070021+klay326@users.noreply.github.com>
 Date: Sun, 22 Nov 2026 00:38:53 -0600
-Subject: [PATCH] xilinxPlatformCableUSB: skip firmware upload when XPCU
+Subject: [PATCH 1/2] xilinxPlatformCableUSB: skip firmware upload when XPCU
  firmware is already running
 
 Some cables (DLC10 / Waveshare Platform Cable USB clones) boot XPCU
@@ -135,6 +135,117 @@ index 693bc9d..d06333e 100644
  	} catch (std::exception &e) {
  		printError(e.what());
  		throw std::runtime_error("lowlevel init failed");
+-- 
+2.54.0 (Apple Git-157)
+
+
+From 2fa4196d3041a7a0dd391a6f1df889bb7458a95e Mon Sep 17 00:00:00 2001
+From: Klay Adams <29070021+klay326@users.noreply.github.com>
+Date: Sun, 22 Nov 2026 11:34:58 -0600
+Subject: [PATCH 2/2] xilinxPlatformCableUSB: accept clones that don't
+ re-enumerate after upload
+
+Some Platform Cable USB clones (e.g. Waveshare) do load and run the
+uploaded xusb_xp2.hex, but keep enumerating as 03fd:0013 instead of
+03fd:0008. openFPGALoader waited 100 s for 0008 and gave up.
+
+FX2_ll gets an optional fallback: if the device hasn't re-enumerated
+after N seconds following an upload but is still present at the
+uninitialized IDs, open it there. A real re-enumerating cable leaves
+0013 within milliseconds, so it never reaches the fallback. The XPCU
+driver uses 3 s and then checks that GET_VERSION answers before going on.
+
+This also corrects the previous commit's premise: those cables don't
+boot the firmware on their own; it was still in RAM from an earlier
+upload. Skipping the upload when GET_VERSION already answers remains
+useful (no firmware file needed until the cable loses power).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/fx2_ll.cpp                 | 11 ++++++++++-
+ src/fx2_ll.hpp                 |  9 ++++++++-
+ src/xilinxPlatformCableUSB.cpp | 12 +++++++++++-
+ 3 files changed, 29 insertions(+), 3 deletions(-)
+
+diff --git a/src/fx2_ll.cpp b/src/fx2_ll.cpp
+index afd911e..2950266 100644
+--- a/src/fx2_ll.cpp
++++ b/src/fx2_ll.cpp
+@@ -21,7 +21,8 @@
+ #define FX2_GCR_CPUCS_8051_RES (1 << 0)
+ 
+ FX2_ll::FX2_ll(uint16_t uninit_vid, uint16_t uninit_pid,
+-		uint16_t vid, uint16_t pid, const std::string &firmware_path)
++		uint16_t vid, uint16_t pid, const std::string &firmware_path,
++		unsigned int no_reenum_fallback_s)
+ {
+ 	int ret;
+ 	bool reenum = false;
+@@ -61,6 +62,14 @@ FX2_ll::FX2_ll(uint16_t uninit_vid, uint16_t uninit_pid,
+ 	do {
+ 		dev_handle = libusb_open_device_with_vid_pid(usb_ctx,
+ 				vid, pid);
++		/* some cables run the uploaded firmware but keep the
++		 * uninitialized IDs: once a real re-enumeration would have
++		 * happened, fall back to the device that is still there
++		 */
++		if (!dev_handle && reenum && no_reenum_fallback_s > 0 &&
++				100 - timeout >= static_cast<int>(no_reenum_fallback_s))
++			dev_handle = libusb_open_device_with_vid_pid(usb_ctx,
++					uninit_vid, uninit_pid);
+ 		timeout--;
+ 		progress.display(100-timeout);
+ 		if (!dev_handle)
+diff --git a/src/fx2_ll.hpp b/src/fx2_ll.hpp
+index 8040530..4a62cf4 100644
+--- a/src/fx2_ll.hpp
++++ b/src/fx2_ll.hpp
+@@ -26,9 +26,16 @@ class FX2_ll {
+ 		 * \param[in] vid: vendor ID for initialized device
+ 		 * \param[in] pid: product ID for initialized device
+ 		 * \param[in] firmware_path: firmware to load
++		 * \param[in] no_reenum_fallback_s: when non-zero and the device has
++		 *            not re-enumerated as vid:pid after this many seconds
++		 *            following a firmware upload, but is still present as
++		 *            uninit_vid:uninit_pid, open it there (for cables whose
++		 *            firmware runs without re-enumerating). The caller must
++		 *            then check that the firmware actually answers.
+ 		 */
+ 		FX2_ll(uint16_t uninit_vid, uint16_t uninit_pid,
+-				uint16_t vid, uint16_t pid, const std::string &firmware_path);
++				uint16_t vid, uint16_t pid, const std::string &firmware_path,
++				unsigned int no_reenum_fallback_s = 0);
+ 		~FX2_ll();
+ 
+ 		/*!
+diff --git a/src/xilinxPlatformCableUSB.cpp b/src/xilinxPlatformCableUSB.cpp
+index d06333e..950fed0 100644
+--- a/src/xilinxPlatformCableUSB.cpp
++++ b/src/xilinxPlatformCableUSB.cpp
+@@ -124,12 +124,22 @@ XilinxPlatformCableUSB::XilinxPlatformCableUSB(const uint16_t vid,
+ 			fx2 = std::make_unique<FX2_ll>(0, 0, vid, pid, "");
+ 		else
+ 			fx2 = std::make_unique<FX2_ll>(vid, pid, XPCU_INITIALIZED_VID,
+-					XPCU_INITIALIZED_PID, firmware_file);
++					XPCU_INITIALIZED_PID, firmware_file, 3);
+ 	} catch (std::exception &e) {
+ 		printError(e.what());
+ 		throw std::runtime_error("lowlevel init failed");
+ 	}
+ 
++	/* after an upload, the device may still be at the uninitialized IDs
++	 * (clone cables that run the firmware without re-enumerating): make
++	 * sure the XPCU firmware really answers before going on
++	 */
++	if (!preloaded) {
++		uint8_t ver[2];
++		if (!fx2->read_ctrl(XPCU_BREQUEST, XPCU_CMD_GET_VERSION, ver, 2))
++			throw std::runtime_error("xilinxPlatformCableUSB: firmware not running after upload");
++	}
++
+ 	fx2->set_interface_alt_setting(0, 1);
+ 
+ 	displayCableVersion();
 -- 
 2.54.0 (Apple Git-157)
 

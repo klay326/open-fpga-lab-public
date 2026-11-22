@@ -156,18 +156,28 @@ bitstream didn't load -- check JTAG/power before retrying. 12 MHz takes
 - The cable enumerates on macOS as **`03fd:0013`** (stock FX2 descriptors,
   no strings). Linux recorded `03fd:0008` only *after* Vivado had loaded
   firmware into it.
-- It **already runs XPCU firmware** at 0013: it answers vendor request
-  `0xB0`/GET_VERSION (FX2 `0x6109`, CPLD `0xfeff`, status `0x43` =
-  target connected) with no upload.
-- openFPGALoader 1.2.0 treats 0013 as "unconfigured", uploads
-  `xusb_xp2.hex` over the FX2 `0xA0` load request -- which this clone ACKs
-  and ignores (RAM readback is junk, the device never re-enumerates) --
-  then waits 100 s for 0008 and fails with `FX2: fail to open device`.
+- openFPGALoader uploads `xusb_xp2.hex` over the FX2 `0xA0` load request,
+  and the clone **does run it**: afterwards it answers vendor request
+  `0xB0`/GET_VERSION (FX2 `0x6109`, CPLD `0xfeff`, status `0x43` = target
+  connected). But it **never re-enumerates** as `03fd:0008`, so stock
+  openFPGALoader 1.2.0 waits 100 s for 0008 and fails with
+  `FX2: fail to open device`.
+- The firmware lives in the FX2's RAM. It survives until the cable loses USB
+  power, then `GET_VERSION` times out until the next upload. (An earlier
+  version of these notes said the cable boots its own firmware. That was
+  wrong: it was an earlier upload still sitting in RAM.)
 - `tools/openfpgaloader/xpcu-detect-preloaded-firmware.patch` (upstream PR
   [trabucayre/openFPGALoader#772](https://github.com/trabucayre/openFPGALoader/pull/772),
-  same issue as #730) sends XPCU GET_VERSION first. A bare FX2 can't answer,
-  so if the cable replies, the driver skips the upload and opens 0013 directly.
-  No extra flag needed.
+  same issue as #730) does two things:
+  - It skips the upload when GET_VERSION already answers.
+  - After an upload, if the cable hasn't re-enumerated within 3 s, it opens
+    the cable at 0013 and checks GET_VERSION.
+
+  Cold upload plus `--detect` takes 3.2 s. A full bitstream at 12 MHz from
+  cold takes 23 s.
+- `fpga/openXC7.mk` passes `--probe-firmware handoff/cable/xusb_hex/xusb_xp2.hex`,
+  so `make program` works right after a replug as well. By hand:
+  `openFPGALoader -c xilinxPlatformCableUsb --probe-firmware handoff/cable/xusb_hex/xusb_xp2.hex ...`.
 - The original Linux failure (openFPGALoader 1.1.1) used `--board
   qmtechKintex7`, which selects **no** cable driver (it falls back to a
   direct FT2232 interface). It was never a JTAG shift-protocol problem.

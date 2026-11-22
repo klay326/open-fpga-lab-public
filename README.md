@@ -42,9 +42,11 @@ this repo for the exact workarounds if you hit the same issues.
 openFPGALoader -c xilinxPlatformCableUsb --freq 12000000 --bitstream <file>.bit
 ```
 The JTAG cable (Waveshare Xilinx Platform Cable USB clone, `03fd:0013`)
-already runs its own XPCU firmware; stock openFPGALoader tries to upload
-firmware it ignores and then times out. The fix detects the running firmware and
-skips the upload. (Earlier notes here blamed the cable's JTAG protocol -- that was
+runs the uploaded XPCU firmware (`handoff/cable/xusb_hex/xusb_xp2.hex`) but
+never re-enumerates as `03fd:0008`, so stock openFPGALoader times out waiting.
+The fix opens it at 0013 once the firmware answers, and skips the upload
+while the firmware is still loaded. `make program` passes the hex, so it also
+works right after a replug. (Earlier notes here blamed the cable's JTAG protocol -- that was
 openFPGALoader 1.1.1 run with `--board`, which selects no cable driver. See
 `MACOS-SETUP.md`.) Vivado Lab (`vivado_lab -mode batch -source flash.tcl`,
 with `connect_hw_server -allow_non_jtag`) still works on x86 Linux as a
