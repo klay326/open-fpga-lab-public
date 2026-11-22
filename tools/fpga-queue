@@ -32,7 +32,13 @@ if [ -z "${FPGA_QUEUE_DIR:-}" ] && [ -s "$REMOTE_FILE" ]; then
     read -r -a SSH_ARGS < "$REMOTE_FILE"
     SSH_ARGS=("${SSH_ARGS[@]/#\~/$HOME}")
     q=""; for a in "$@"; do q+=" $(printf '%q' "$a")"; done
-    exec ssh -o ConnectTimeout=10 -o BatchMode=yes "${SSH_ARGS[@]}" "/usr/local/bin/fpga-queue$q"
+    # Never fall back to the local files: the Pi is the only truth. Remote exit
+    # codes pass through unchanged (take: 0 only on success); ssh itself fails with 255.
+    rc=0; ssh -o ConnectTimeout=10 -o BatchMode=yes "${SSH_ARGS[@]}" "/usr/local/bin/fpga-queue$q" || rc=$?
+    if [ "$rc" = 255 ]; then
+        echo "fpga-queue: CAN'T REACH THE QUEUE ON THE PI (ssh $(cat "$REMOTE_FILE")). Nothing was changed; don't touch the board." >&2
+    fi
+    exit "$rc"
 fi
 if [ -n "${FPGA_QUEUE_DIR:-}" ]; then D="$FPGA_QUEUE_DIR"
 elif [ -d /var/lib/fpga-queue ] && [ -w /var/lib/fpga-queue ]; then D=/var/lib/fpga-queue
