@@ -1,0 +1,16 @@
+diff --git a/xilinx/pack_io_xc7.cc b/xilinx/pack_io_xc7.cc
+index 0c312e26..5a47aa2e 100644
+--- a/xilinx/pack_io_xc7.cc
++++ b/xilinx/pack_io_xc7.cc
+@@ -1096,6 +1096,11 @@ void XC7Packer::pack_iologic()
+             continue;
+         if (used_oserdes_bels.count(bel))
+             continue;
++        // LIOI3_SING/RIOI3_SING tiles (bank top/bottom) have a single IOLOGIC
++        // site, and FASM for an OFB-only pair placed there comes out as the
++        // wrong site (ILOGIC_Y1 + ILOGIC0 pip), breaking the loopback.
++        if (boost::contains(ctx->getBelTileType(bel).str(ctx), "_SING"))
++            continue;
+         available_oserdes_bels.push(bel);
+     }
+ 

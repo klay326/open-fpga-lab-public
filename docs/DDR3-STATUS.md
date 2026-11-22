@@ -149,9 +149,48 @@ Findings so far:
   `RIOI_O0.RIOI_OLOGIC0_OQ always` and `OMUX.D1` exist. So ODELAYs are
   effectively dropped and the controller's command/CK delay assumptions break.
   Still stuck in states 2-4.
-- **Next (not done yet):** `ODELAY_SUPPORTED=0` with CK forwarded through an
-  ODDR (D1=0, D2=1, C=i_ddr3_clk) instead of the PHY's `OBUFDS(I=clock)`
-  fabric bypass. The edit to `ddr3_phy.v` didn't apply in this session (pattern
-  mismatch), so the tree still has `ODELAY_SUPPORTED(1)`. After that, add
-  `INTERNAL_VREF 0.75` for bank 34 (the MIG uses internal VREF), which DQ
-  reads will need.
+- `ODELAY_SUPPORTED=0` with CK forwarded through an ODDR in the IO tile
+  (D1=0, D2=1, C=i_ddr3_clk): CK's IOLOGIC now matches Vivado's exactly.
+  Still stuck in states 2-4.
+- **nextpnr-xilinx VREF bug:** it ignores `INTERNAL_VREF` and always emits
+  `HCLK_IOI.VREF.V_675_MV` (right for SSTL135/DDR3L, wrong for this SSTL15
+  board). Vivado sets `HCLK_IOI_X235Y130.VREF.V_750_MV`. `fasm_fixup.py`
+  rewrites it. No change on its own (DQS doesn't need VREF; DQ reads will).
+- **nextpnr-xilinx SING-tile bug (fixed locally, upstreamable):** the
+  UberDDR3 bitslip-training OSERDES->ISERDES pairs connect only through OFB.
+  nextpnr places such pairs on the first free OSERDES bels anywhere, which
+  includes single-site `LIOI3_SING` tiles. There it emits
+  `ILOGIC_Y1.ISERDES.OFB_USED` alongside the `ILOGIC0_OFB` pip, so the loopback
+  is dead and calibration hangs in state 1 (BITSLIP_DQS_TRAIN_1). Whether you
+  hit it depends on placement luck: the ODELAY=1 build happened to dodge it.
+  The fix is to skip `*_SING` tile types in `pack_io_xc7.cc`
+  (`tools/nextpnr-xilinx/skip-sing-tiles-for-ofb-serdes.patch`).
+- **IOB config now matches Vivado on every DDR3 pin.** `fasm_fixup.py`
+  replaces nextpnr's HP-bank glue bits with Vivado's per-pin set
+  (`vivado-bank34-glue.txt`): nextpnr put `OBUF_HP_BANK_GLUE` on every output,
+  but Vivado puts it only on the LVCMOS15 RESET#. It also replaces nextpnr's
+  partial `LVCMOS15_LVCMOS18.DRIVE.I12_I16...` on RESET# with the full
+  `LVCMOS15.DRIVE.I12`. The partial feature misses 7 drive bits and forces
+  39_23 low where I12 needs it high, a real nextpnr/db bug for any LVCMOS15
+  output in an HP bank. The only remaining IOB difference is on Vivado's input
+  side for DQ/DQS: IOBUF_DCIEN control (`DCITERMDISABLE`, `IBUFDISABLE`) and
+  `IBUF_LOW_PWR=FALSE`. Those don't explain a DRAM that never drives DQS.
+  **Still stuck in states 2-4, DQS all 0.**
+- **Timing is now the prime suspect.** The controller clock domain makes
+  only 47-64 MHz across 6 placer seeds, against 83.33 MHz. The worst path is
+  the calibration FSM (`state_calibrate` -> a CE), 15.7 ns, 86% of it routing.
+  The DDR:controller ratio is fixed at 4:1, and DDR3 (DLL on) can't run below
+  ~303 MHz, so the controller can't simply be slowed down. nextpnr's xc7
+  timing model is pessimistic (LiteX ran fine at 100 MHz with an "84 MHz"
+  report), but probably not by 30%.
+
+Next, cheapest first:
+1. Find out *which* endpoints fail (all of them, not just the worst). If any
+   feed the command OSERDES D inputs, commands are being corrupted. A
+   pipeline register stage there is cheap.
+2. Pipeline or floorplan the calibration FSM so the controller domain meets
+   83 MHz in nextpnr. Then retest.
+3. Run the same RTL through Vivado (synthesis + P&R only, same XDC). If
+   Vivado's build calibrates, the RTL is good and the bug is open-flow
+   timing/routing. If it doesn't, the port (board params, CK polarity, init)
+   is wrong.
