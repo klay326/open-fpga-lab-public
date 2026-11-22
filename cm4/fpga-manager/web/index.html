@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FPGA Project Manager</title>
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--ink:#1b1f24;--mute:#5d6672;--line:#dde1e6;--acc:#1f6feb;--ok:#1a7f37;--warn:#9a6700;--bad:#cf222e;--code:#f0f2f4}
+@media (prefers-color-scheme:dark){:root{--bg:#0f1216;--card:#171b21;--ink:#e6e9ee;--mute:#9aa4b1;--line:#2a313a;--acc:#4c8dff;--ok:#3fb950;--warn:#d29922;--bad:#f85149;--code:#0b0e12}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+main{max-width:1060px;margin:0 auto;padding:20px 16px 60px}
+h1{font-size:22px;margin:0}
+h2{font-size:15px;margin:0 0 10px;color:var(--mute);font-weight:600;text-transform:uppercase;letter-spacing:.04em}
+header{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:16px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px;margin-bottom:16px}
+.now{display:grid;grid-template-columns:1fr auto;gap:8px 16px;align-items:center}
+.big{font-size:24px;font-weight:650}
+.mute{color:var(--mute)}
+.pill{display:inline-block;padding:1px 8px;border-radius:99px;font-size:12px;border:1px solid var(--line);color:var(--mute)}
+.pill.ok{color:var(--ok);border-color:var(--ok)}.pill.warn{color:var(--warn);border-color:var(--warn)}.pill.bad{color:var(--bad);border-color:var(--bad)}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px}
+.proj{border:1px solid var(--line);border-radius:8px;padding:12px;display:flex;flex-direction:column;gap:6px}
+.proj.cur{border-color:var(--acc);box-shadow:0 0 0 1px var(--acc) inset}
+.proj h3{margin:0;font-size:16px}
+.proj p{margin:0;font-size:13.5px;color:var(--mute)}
+.uarts{font-size:12.5px;margin:0;padding-left:16px;color:var(--mute)}
+button{font:inherit;padding:6px 14px;border-radius:7px;border:1px solid var(--acc);background:var(--acc);color:#fff;cursor:pointer}
+button.ghost{background:transparent;color:var(--acc)}
+button:disabled{opacity:.45;cursor:not-allowed}
+input{font:inherit;padding:6px 8px;border-radius:7px;border:1px solid var(--line);background:var(--bg);color:var(--ink);width:150px}
+pre{background:var(--code);border:1px solid var(--line);border-radius:7px;padding:10px;margin:0;font:12px/1.4 ui-monospace,Menlo,monospace;overflow:auto;max-height:320px;white-space:pre-wrap;word-break:break-all}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+@media (max-width:760px){.two{grid-template-columns:1fr}.now{grid-template-columns:1fr}}
+table{border-collapse:collapse;width:100%;font-size:13px}td{padding:4px 6px;border-top:1px solid var(--line);vertical-align:top}
+.msg{min-height:20px;font-size:13.5px}
+.err{color:var(--bad)}
+form{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+code{font:12.5px ui-monospace,Menlo,monospace}
+a{color:var(--acc)}
+</style>
+</head>
+<body>
+<main>
+<header>
+  <div><h1>FPGA project manager</h1><div class="mute">QMTech XC7K325T + CM4. Pick a project; the CM4 flashes it over JTAG.</div></div>
+  <div id="auth"></div>
+</header>
+
+<section class="card">
+  <div class="now">
+    <div>
+      <div class="mute">Loaded now</div>
+      <div class="big" id="cur">…</div>
+      <div id="curinfo" class="mute"></div>
+    </div>
+    <div id="curpills" style="text-align:right"></div>
+  </div>
+  <div id="job" class="msg"></div>
+</section>
+
+<section class="card" id="panelcard">
+  <h2 id="paneltitle">Panel</h2>
+  <div id="panel"></div>
+</section>
+
+<section class="card">
+  <h2>Projects</h2>
+  <div class="grid" id="projects"></div>
+  <div class="msg" id="swmsg"></div>
+</section>
+
+<div class="two">
+  <section class="card">
+    <h2>Board queue</h2>
+    <div id="queue"></div>
+    <pre id="qlog" style="margin-top:10px;max-height:200px"></pre>
+  </section>
+  <section class="card">
+    <h2>Recent switches</h2>
+    <table id="hist"></table>
+  </section>
+</div>
+<p class="mute" style="font-size:12.5px">Only catalogued bitstreams with a matching SHA-256 can be flashed. Every switch takes the shared board queue
+(<code>fpga-queue</code>) as <code>web-flasher</code>. If a flash fails, or a project stops answering or overheats, the board falls back to the playground.</p>
+</main>
+<script>
+"use strict";
+const $=id=>document.getElementById(id);
+const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+let S=null, busy=false;
+function ago(t){if(!t)return"";let s=Math.max(0,Date.now()/1000-t);if(s<90)return Math.round(s)+" s";s/=60;if(s<90)return Math.round(s)+" min";s/=60;if(s<48)return s.toFixed(1)+" h";return (s/24).toFixed(1)+" d"}
+function hm(t){return t?new Date(t*1000).toLocaleString([], {month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"}):""}
+async function api(path,body){
+  const r=await fetch(path,body===undefined?{cache:"no-store"}:{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+  let j={};try{j=await r.json()}catch(e){}
+  return [r.status,j];
+}
+function renderAuth(){
+  const a=$("auth");
+  if(S&&S.user){a.innerHTML=`<span class="mute">Signed in as <b>${esc(S.user)}</b></span> <button class="ghost" id="lo">Sign out</button>`;
+    $("lo").onclick=async()=>{await api("/manager/api/logout",{});refresh()};return}
+  if(a.querySelector("form"))return;
+  a.innerHTML=`<form id="lf"><input id="lu" autocomplete="username" placeholder="user" aria-label="user">
+  <input id="lp" type="password" autocomplete="current-password" placeholder="password" aria-label="password">
+  <button>Sign in</button><span id="lm" class="err" style="flex-basis:100%;font-size:13px"></span></form>`;
+  $("lf").onsubmit=async e=>{e.preventDefault();$("lm").textContent="";
+    const [c,j]=await api("/manager/api/login",{user:$("lu").value,password:$("lp").value});
+    if(c!==200){$("lm").textContent=j.error||"sign-in failed";return}
+    $("auth").innerHTML="";refresh()};
+}
+function renderNow(){
+  const p=S.projects.find(x=>x.id===S.loaded);
+  $("cur").textContent=p?p.name:(S.loaded===null?"unknown":S.loaded);
+  let info=[];
+  if(S.since)info.push(`since ${hm(S.since)} (<span id="ago">${ago(S.since)}</span> ago), by ${esc(S.by)}`);
+  if(S.result&&S.result!=="ok")info.push(`<span class="err">${esc(S.result)}: ${esc(S.message)}</span>`);
+  if(S.stale)info.push(`<span style="color:var(--warn)">The board was used by ${esc(S.stale.by)} at ${esc(S.stale.at)} after this; it may hold something else. ${S.stale.note?"Note: "+esc(S.stale.note):""}</span>`);
+  if(p&&p.owner!=="pvtd"&&!S.flag&&!S.job)info.push(`<span style="color:var(--warn)">pvtd isn't being held down (the CM4 may have restarted), so it may have reloaded the playground.</span>`);
+  $("curinfo").innerHTML=info.join("<br>");
+  let pills=[];
+  pills.push(S.pvtd_active?'<span class="pill ok">pvtd running</span>':'<span class="pill">pvtd stopped</span>');
+  if(S.xadc)pills.push(`<span class="pill ${S.xadc.temp_c>70?"bad":S.xadc.temp_c>60?"warn":"ok"}">die ${S.xadc.temp_c.toFixed(1)} °C</span>`);
+  pills.push(`<span class="pill ${S.watch.active?"ok":""}" title="${esc(S.watch.why)}">${S.watch.active?"watchdog on":"watchdog idle"}</span>`);
+  if(S.watch.fault)pills.push(`<span class="pill bad">${esc(S.watch.fault)}</span>`);
+  $("curpills").innerHTML=pills.join(" ");
+  const j=S.job;
+  if(j)$("job").innerHTML=`<span class="pill warn">switching</span> to <b>${esc(j.target)}</b> by ${esc(j.by)}, ${ago(j.started)}… ${esc(j.step||"")}`;
+  else if(S.last_result&&Date.now()/1000-S.last_result.t<120)$("job").innerHTML=`Last switch to <b>${esc(S.last_result.target)}</b>: ${esc(S.last_result.result)}`;
+  else $("job").innerHTML="";
+}
+function renderPanel(){
+  const p=S.projects.find(x=>x.id===S.loaded);
+  const t=$("paneltitle"),d=$("panel");
+  if(!p){t.textContent="Panel";d.innerHTML='<span class="mute">No catalogued project is known to be loaded.</span>';return}
+  if(p.panel==="pvtd"){t.textContent="Playground";
+    d.innerHTML=S.pvtd_active?`The playground's live page (heater, hold, TRNG, history): <a href="/">open the playground</a>.`:`<span class="mute">pvtd isn't running.</span>`;return}
+  if(p.panel==="serial_tail"){t.textContent="CM4 UART (read-only)";
+    const L=(S.panel&&S.panel.lines)||[];
+    d.innerHTML=`<div class="mute" style="font-size:13px;margin-bottom:6px">${S.panel?(S.panel.err?'<span class="err">'+esc(S.panel.err)+'</span>':(S.panel.last_line?"last line "+ago(S.panel.last_line)+" ago":"no output yet")):esc(S.watch.why)}</div><pre id="tail">${L.map(x=>esc(x[1])).join("\n")||"…"}</pre>`;
+    const e=$("tail");e.scrollTop=e.scrollHeight;return}
+  t.textContent=p.name;
+  d.innerHTML=`<p style="margin:0 0 6px">${esc(p.description)}</p><ul class="uarts">${(p.uarts||[]).map(u=>`<li>${esc(u.where)}, ${u.baud} baud: ${esc(u.speaks)}</li>`).join("")}</ul>
+  <p class="mute" style="font-size:13px">Its output isn't visible from the CM4. Talk to it from the Mac on JP5.</p>`;
+}
+function renderProjects(){
+  const can=S.user&&!S.job&&!S.holder&&!(S.queue||[]).length;
+  $("projects").innerHTML=S.projects.map(p=>`<div class="proj ${p.id===S.loaded?"cur":""}">
+    <div style="display:flex;justify-content:space-between;gap:8px;align-items:baseline"><h3>${esc(p.name)}</h3>${p.id===S.loaded?'<span class="pill ok">loaded</span>':""}</div>
+    <p>${esc(p.description)}</p>
+    <ul class="uarts">${(p.uarts||[]).map(u=>`<li>${esc(u.where)} · ${u.baud} · ${esc(u.speaks)}</li>`).join("")}</ul>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-top:auto">
+      <code class="mute" title="SHA-256 prefix">${esc(p.sha256)}</code>
+      <button data-id="${esc(p.id)}" ${can?"":"disabled"} title="${S.user?(can?"":"board busy"):"sign in to switch"}">${p.id===S.loaded?"Reload":"Load"}</button></div></div>`).join("");
+  $("projects").querySelectorAll("button[data-id]").forEach(b=>b.onclick=()=>doSwitch(b.dataset.id));
+}
+async function doSwitch(id){
+  const p=S.projects.find(x=>x.id===id);
+  if(!confirm(`Flash "${p.name}" onto the board? Whatever is running now stops.`))return;
+  const [c,j]=await api("/manager/api/switch",{project:id});
+  $("swmsg").innerHTML=c===202?esc(j.message):`<span class="err">${esc(j.error||j.message||"refused")}</span>`;
+  refresh();
+}
+function renderQueue(){
+  const h=S.holder,q=S.queue||[];
+  $("queue").innerHTML=`<div><b>Holder:</b> ${h?esc(h.name)+' <span class="mute">since '+esc(h.since)+'</span><div class="mute" style="font-size:13px">'+esc(h.what)+'</div>':'<span class="mute">board free</span>'}</div>
+  <div style="margin-top:6px"><b>Waiting:</b> ${q.length?"<ol style='margin:4px 0;padding-left:20px'>"+q.map(x=>`<li>${esc(x.name)} <span class="mute" style="font-size:13px">${esc(x.what)}</span></li>`).join("")+"</ol>":'<span class="mute">nobody</span>'}</div>`;
+  $("qlog").textContent=(S.log||[]).join("\n");
+}
+function renderHist(){
+  const H=S.history||[];
+  $("hist").innerHTML=H.length?H.map(h=>`<tr><td class="mute" style="white-space:nowrap">${hm(h.t)}</td><td><b>${esc(h.target)}</b>${h.loaded&&h.loaded!==h.target?" → "+esc(h.loaded):""}<br><span class="mute">${esc(h.by)} · ${esc(h.result)} · ${h.secs} s</span></td></tr>`).join(""):'<tr><td class="mute">none yet</td></tr>';
+}
+async function refresh(){
+  if(busy)return;busy=true;
+  try{const [c,j]=await api("/manager/api/status");if(c===200){S=j;renderAuth();renderNow();renderPanel();renderProjects();renderQueue();renderHist()}}
+  catch(e){$("job").innerHTML='<span class="err">can\'t reach the manager</span>'}
+  finally{busy=false}
+}
+refresh();setInterval(refresh,3000);
+setInterval(()=>{const a=$("ago");if(a&&S)a.textContent=ago(S.since)},1000);
+</script>
+</body>
+</html>

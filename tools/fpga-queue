@@ -1,8 +1,16 @@
 #!/bin/bash
 # fpga-queue: one-at-a-time access to the QMTech K7 board (FPGA + JTAG cable +
-# JP5 UART + CM4 link) for the Claude sessions and humans sharing it.
+# JP5 UART + CM4 link) for the Claude sessions, humans and the web flasher
+# (cm4/fpga-manager) sharing it.
 #
-# State lives in ~/.fpga-board/ (not in the repo):
+# There is ONE queue, on the CM4 in /var/lib/fpga-queue/. On the Mac this same
+# script forwards every command over ssh when ~/.fpga-board/remote exists
+# (one line: the ssh options and destination, e.g.
+#   -i ~/.ssh/qmtech_cm4 kladams@qmtech-cm4.local).
+# Without that file it uses a local state dir (FPGA_QUEUE_DIR, default
+# /var/lib/fpga-queue if writable, else ~/.fpga-board).
+#
+# State files:
 #   queue   one line per waiting job:  <name>\t<since>\t<what it will do>
 #   holder  the job currently using the board (same format), absent if free
 #   log     history of take/release
@@ -13,39 +21,59 @@
 #                                     free and <name> is first in line
 #   fpga-queue release <name> ["note"] give the board back (only the holder)
 #   fpga-queue leave <name>           drop out of the line
+#   fpga-queue log [n]                last n log lines (default 20)
 #
 # Rules: don't touch JTAG, the JP5 UART or the board's power without holding
 # it. When you release, leave the board in a known state and say which
 # bitstream is loaded in the note ("restored playground").
 set -euo pipefail
-D="${FPGA_QUEUE_DIR:-$HOME/.fpga-board}"; mkdir -p "$D"; touch "$D/queue" "$D/log"
+REMOTE_FILE="$HOME/.fpga-board/remote"
+if [ -z "${FPGA_QUEUE_DIR:-}" ] && [ -s "$REMOTE_FILE" ]; then
+    read -r -a SSH_ARGS < "$REMOTE_FILE"
+    SSH_ARGS=("${SSH_ARGS[@]/#\~/$HOME}")
+    q=""; for a in "$@"; do q+=" $(printf '%q' "$a")"; done
+    exec ssh -o ConnectTimeout=10 -o BatchMode=yes "${SSH_ARGS[@]}" "/usr/local/bin/fpga-queue$q"
+fi
+if [ -n "${FPGA_QUEUE_DIR:-}" ]; then D="$FPGA_QUEUE_DIR"
+elif [ -d /var/lib/fpga-queue ] && [ -w /var/lib/fpga-queue ]; then D=/var/lib/fpga-queue
+else D="$HOME/.fpga-board"; fi
+umask 002
+mkdir -p "$D"; touch "$D/queue" "$D/log"
 now(){ date '+%Y-%m-%d %H:%M'; }
-lock(){ while ! mkdir "$D/.lock" 2>/dev/null; do sleep 0.1; done; trap 'rmdir "$D/.lock" 2>/dev/null || true' EXIT; }
+if command -v flock >/dev/null 2>&1; then
+    lock(){ exec 9>>"$D/.flock"; flock -w 30 9 || { echo "queue lock timeout" >&2; exit 3; }; }
+else
+    lock(){ while ! mkdir "$D/.lock" 2>/dev/null; do sleep 0.1; done; trap 'rmdir "$D/.lock" 2>/dev/null || true' EXIT; }
+fi
 cmd="${1:-status}"; name="${2:-}"
-need_name(){ [ -n "$name" ] || { echo "usage: fpga-queue $cmd <name> ..." >&2; exit 2; }; }
+need_name(){ [ -n "$name" ] || { echo "usage: fpga-queue $cmd <name> ..." >&2; exit 2; }
+             [[ "$name" =~ ^[A-Za-z0-9._-]{1,40}$ ]] || { echo "bad name: $name" >&2; exit 2; }; }
+oneline(){ printf '%s' "$1" | tr '\t\n\r' '   ' | cut -c1-300; }
 lock
 case "$cmd" in
   status)
     if [ -s "$D/holder" ]; then printf 'HOLDER:  %s\n' "$(tr '\t' ' ' < "$D/holder")"; else echo "HOLDER:  (board free)"; fi
     if [ -s "$D/queue" ]; then echo "QUEUE:"; nl -w2 -s'. ' "$D/queue" | tr '\t' ' '; else echo "QUEUE:   (empty)"; fi ;;
   join)
-    need_name; what="${3:-}"
+    need_name; what="$(oneline "${3:-}")"
     if cut -f1 "$D/queue" | grep -qx "$name"; then echo "$name is already in line"; else
-      printf '%s\t%s\t%s\n' "$name" "$(now)" "$what" >> "$D/queue"; echo "$name joined at position $(wc -l < "$D/queue")"; fi ;;
+      printf '%s\t%s\t%s\n' "$name" "$(now)" "$what" >> "$D/queue"; echo "$name joined at position $(wc -l < "$D/queue" | tr -d ' ')"; fi ;;
   take)
     need_name
     if [ -s "$D/holder" ]; then echo "busy: held by $(cut -f1 "$D/holder")"; exit 1; fi
     first=$(head -1 "$D/queue" | cut -f1)
     if [ "$first" != "$name" ]; then echo "not your turn: next is ${first:-nobody (join first)}"; exit 1; fi
-    head -1 "$D/queue" | awk -F'\t' -v t="$(now)" 'BEGIN{OFS="\t"}{$2=t; print}' > "$D/holder"
+    head -1 "$D/queue" | awk -F'\t' -v t="$(now)" 'BEGIN{OFS="\t"}{$2=t; print}' > "$D/holder.new"; mv "$D/holder.new" "$D/holder"
     tail -n +2 "$D/queue" > "$D/queue.new"; mv "$D/queue.new" "$D/queue"
     printf '%s\tTAKE\t%s\n' "$(now)" "$name" >> "$D/log"; echo "$name holds the board" ;;
   release)
     need_name
     if [ "$(cut -f1 "$D/holder" 2>/dev/null)" != "$name" ]; then echo "$name doesn't hold the board"; exit 1; fi
-    rm -f "$D/holder"; printf '%s\tRELEASE\t%s\t%s\n' "$(now)" "$name" "${3:-}" >> "$D/log"
+    rm -f "$D/holder"; printf '%s\tRELEASE\t%s\t%s\n' "$(now)" "$name" "$(oneline "${3:-}")" >> "$D/log"
     echo "released; next: $(head -1 "$D/queue" | cut -f1)" ;;
   leave)
     need_name; awk -F"\t" -v n="$name" "\$1!=n" "$D/queue" > "$D/queue.new" || true; mv "$D/queue.new" "$D/queue"; echo "$name left the line" ;;
-  *) sed -n '2,20p' "$0"; exit 2 ;;
+  log)
+    n="${2:-20}"; [[ "$n" =~ ^[0-9]{1,4}$ ]] || n=20; tail -n "$n" "$D/log" | tr '\t' ' ' ;;
+  *) sed -n '2,30p' "$0"; exit 2 ;;
 esac
