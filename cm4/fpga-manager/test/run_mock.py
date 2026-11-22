@@ -133,6 +133,17 @@ def queue(*a):
     return subprocess.run([conf["queue"]] + list(a), env=env, capture_output=True, text=True).stdout
 
 
+if "--serve" in sys.argv:                     # leave it running for a look at the page
+    for _ in range(50):
+        try:
+            req("GET", "/manager/healthz"); break
+        except OSError:
+            time.sleep(0.1)
+    ck = req("POST", "/manager/api/login", {"user": "tester", "password": pw})[2].split(";")[0]
+    req("POST", "/manager/api/switch", {"project": "pvt-lab"}, cookie=ck)
+    print("http://127.0.0.1:%d/manager/" % PORT, flush=True)
+    daemon.wait()
+    sys.exit()
 try:
     for _ in range(50):
         try:
