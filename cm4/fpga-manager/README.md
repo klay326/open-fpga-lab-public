@@ -64,7 +64,9 @@ the hashes again on the Pi, and `fpga-flash` checks them before every flash.
 | `pvt-lab` | pvt_lab v6 on JP5 115200; status mirrored A15 -> serial0 | serial0 (RX only) | UART tail; no `R ...` line for 3x30 s -> fallback |
 | `trng` | raw bits on JP5 1 Mbaud | no | info |
 | `litex-cm4-uart` | LiteX BIOS console on serial0 115200 (+ JP5) | serial0 | UART tail |
-| `ddr3-test` | report on JP5 9600 | no | info |
+| `ddr3-test` | byte bridge on JP5 9600 (`handoff/bitstreams/ddr3-test-uberddr3.bit`, board-verified 260/260) | no | info |
+
+The LiteX DDR3 SoC (`build-qmtech-k7-ddr3-83`) is deliberately not catalogued: it flashes but the BIOS doesn't boot yet.
 
 `pvt-lab` is v6 (`pvt_lab.bit`, commit b672fc7): scope, die map, local /4 rings.
 
