@@ -23,7 +23,18 @@ if [ -z "${SKIP_OFL:-}" ]; then
     install -m 755 "$SRC/build/openFPGALoader" /usr/local/bin/openFPGALoader
 fi
 install -d /usr/local/share/pvtd
-install -m 644 "$REPO/handoff/cable/xusb_hex/xusb_xp2.hex" /usr/local/share/pvtd/xusb_xp2.hex
+# Platform Cable USB firmware. Xilinx's license doesn't allow redistributing it,
+# so the public copy of this repo leaves it out: keep an installed one, or
+# take it from an ISE/Vivado install (<Vivado>/data/xicom/xusb_xp2.hex).
+FW_SRC="$REPO/handoff/cable/xusb_hex/xusb_xp2.hex"; FW=/usr/local/share/pvtd/xusb_xp2.hex
+if [ -f "$FW_SRC" ]; then
+    install -m 644 "$FW_SRC" "$FW"
+elif [ -f "$FW" ]; then
+    echo "note: $FW_SRC not in this checkout, keeping the installed $FW"
+else
+    echo "WARNING: no xusb_xp2.hex. Copy it from an ISE/Vivado install (<Vivado>/data/xicom/xusb_xp2.hex)"
+    echo "         to $FW; until then the XADC reads and bitstream reloads need the cable's firmware already loaded."
+fi
 install -m 644 "$HERE/60-xpcu.rules" /etc/udev/rules.d/60-xpcu.rules
 grep -q "^dtoverlay=uart3" /boot/firmware/config.txt || { echo "dtoverlay=uart3" >> /boot/firmware/config.txt; echo "added dtoverlay=uart3: reboot needed for the TRNG UART"; }
 udevadm control --reload-rules && udevadm trigger --subsystem-match=usb
