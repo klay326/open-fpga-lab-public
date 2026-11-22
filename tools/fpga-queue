@@ -1,0 +1,51 @@
+#!/bin/bash
+# fpga-queue: one-at-a-time access to the QMTech K7 board (FPGA + JTAG cable +
+# JP5 UART + CM4 link) for the Claude sessions and humans sharing it.
+#
+# State lives in ~/.fpga-board/ (not in the repo):
+#   queue   one line per waiting job:  <name>\t<since>\t<what it will do>
+#   holder  the job currently using the board (same format), absent if free
+#   log     history of take/release
+#
+#   fpga-queue status                 who holds the board, who is waiting
+#   fpga-queue join <name> "<what>"   get in line (no-op if already in line)
+#   fpga-queue take <name>            succeeds (exit 0) only if the board is
+#                                     free and <name> is first in line
+#   fpga-queue release <name> ["note"] give the board back (only the holder)
+#   fpga-queue leave <name>           drop out of the line
+#
+# Rules: don't touch JTAG, the JP5 UART or the board's power without holding
+# it. When you release, leave the board in a known state and say which
+# bitstream is loaded in the note ("restored playground").
+set -euo pipefail
+D="${FPGA_QUEUE_DIR:-$HOME/.fpga-board}"; mkdir -p "$D"; touch "$D/queue" "$D/log"
+now(){ date '+%Y-%m-%d %H:%M'; }
+lock(){ while ! mkdir "$D/.lock" 2>/dev/null; do sleep 0.1; done; trap 'rmdir "$D/.lock" 2>/dev/null || true' EXIT; }
+cmd="${1:-status}"; name="${2:-}"
+need_name(){ [ -n "$name" ] || { echo "usage: fpga-queue $cmd <name> ..." >&2; exit 2; }; }
+lock
+case "$cmd" in
+  status)
+    if [ -s "$D/holder" ]; then printf 'HOLDER:  %s\n' "$(tr '\t' ' ' < "$D/holder")"; else echo "HOLDER:  (board free)"; fi
+    if [ -s "$D/queue" ]; then echo "QUEUE:"; nl -w2 -s'. ' "$D/queue" | tr '\t' ' '; else echo "QUEUE:   (empty)"; fi ;;
+  join)
+    need_name; what="${3:-}"
+    if cut -f1 "$D/queue" | grep -qx "$name"; then echo "$name is already in line"; else
+      printf '%s\t%s\t%s\n' "$name" "$(now)" "$what" >> "$D/queue"; echo "$name joined at position $(wc -l < "$D/queue")"; fi ;;
+  take)
+    need_name
+    if [ -s "$D/holder" ]; then echo "busy: held by $(cut -f1 "$D/holder")"; exit 1; fi
+    first=$(head -1 "$D/queue" | cut -f1)
+    if [ "$first" != "$name" ]; then echo "not your turn: next is ${first:-nobody (join first)}"; exit 1; fi
+    head -1 "$D/queue" | awk -F'\t' -v t="$(now)" 'BEGIN{OFS="\t"}{$2=t; print}' > "$D/holder"
+    tail -n +2 "$D/queue" > "$D/queue.new"; mv "$D/queue.new" "$D/queue"
+    printf '%s\tTAKE\t%s\n' "$(now)" "$name" >> "$D/log"; echo "$name holds the board" ;;
+  release)
+    need_name
+    if [ "$(cut -f1 "$D/holder" 2>/dev/null)" != "$name" ]; then echo "$name doesn't hold the board"; exit 1; fi
+    rm -f "$D/holder"; printf '%s\tRELEASE\t%s\t%s\n' "$(now)" "$name" "${3:-}" >> "$D/log"
+    echo "released; next: $(head -1 "$D/queue" | cut -f1)" ;;
+  leave)
+    need_name; awk -F"\t" -v n="$name" "\$1!=n" "$D/queue" > "$D/queue.new" || true; mv "$D/queue.new" "$D/queue"; echo "$name left the line" ;;
+  *) sed -n '2,20p' "$0"; exit 2 ;;
+esac

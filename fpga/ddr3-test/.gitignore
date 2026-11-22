@@ -1,2 +1,3 @@
 *.vref.fasm
 *.fixed.fasm
+out/
