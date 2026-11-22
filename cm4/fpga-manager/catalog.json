@@ -35,10 +35,10 @@
     },
     {
       "id": "pvt-lab",
-      "name": "pvt-lab v4",
-      "description": "Standalone PVT lab: 5 ring oscillators, heater with the 2.7 s UART watchdog, fabric hold loop, TDC, droop monitor. Driven from the Mac over JP5 (fpga/pvt-lab/pvt_lab.py); the status line is mirrored to the CM4 read-only.",
-      "source": "fpga/pvt-lab/pvt_lab_v4.bit",
-      "sha256": "809b057e3e4f0e0764b343f18b08a6129aee10a5d927273c384af18d030a1708",
+      "name": "pvt-lab v6",
+      "description": "Standalone PVT lab: 5 ring oscillators, heater with the 2.7 s UART watchdog, fabric hold loop, TDC, droop monitor, plus v6's on-die supply-noise scope and 8x8 die map (64/64 rings, local /4 per ring). Driven from the Mac over JP5 (fpga/pvt-lab/pvt_lab.py); the status line is mirrored to the CM4 read-only.",
+      "source": "fpga/pvt-lab/pvt_lab.bit",
+      "sha256": "b359ec54b97d0ee88ccbcafb3c75133d1f598b523581f8521062bae1bb7e2cf9",
       "uarts": [
         {
           "where": "JP5 (Mac USB-UART)",

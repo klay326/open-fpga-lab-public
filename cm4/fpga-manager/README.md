@@ -61,12 +61,12 @@ the hashes again on the Pi, and `fpga-flash` checks them before every flash.
 | id | what it speaks | where the CM4 can see it | panel / health |
 |---|---|---|---|
 | `playground` (pvtd's file) | pvt_lab lines + K keepalive on serial0 115200; TRNG on ttyAMA3 1 Mbaud | both | pvtd's own page; pvtd does keepalives, XADC, reloads |
-| `pvt-lab` | pvt_lab v4 on JP5 115200; status mirrored A15 -> serial0 | serial0 (RX only) | UART tail; no `R ...` line for 3x30 s -> fallback |
+| `pvt-lab` | pvt_lab v6 on JP5 115200; status mirrored A15 -> serial0 | serial0 (RX only) | UART tail; no `R ...` line for 3x30 s -> fallback |
 | `trng` | raw bits on JP5 1 Mbaud | no | info |
 | `litex-cm4-uart` | LiteX BIOS console on serial0 115200 (+ JP5) | serial0 | UART tail |
 | `ddr3-test` | report on JP5 9600 | no | info |
 
-`pvt-lab` is the v4 snapshot (`pvt_lab_v4.bit`); v5 is still in progress.
+`pvt-lab` is v6 (`pvt_lab.bit`, commit b672fc7): scope, die map, local /4 rings.
 
 ## Who owns the board when
 
