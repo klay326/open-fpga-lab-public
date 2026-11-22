@@ -100,7 +100,7 @@ the hashes again on the Pi, and `fpga-flash` checks them before every flash.
 over ssh when `~/.fpga-board/remote` exists:
 
 ```bash
-echo "-i ~/.ssh/qmtech_cm4 kladams@qmtech-cm4.local" > ~/.fpga-board/remote
+echo "-i ~/.ssh/<cm4-key> <user>@<cm4-host>" > ~/.fpga-board/remote
 tools/fpga-queue status          # now runs /usr/local/bin/fpga-queue on the Pi
 ```
 
@@ -151,13 +151,13 @@ There is no interactive JTAG on the page.
 cm4/fpga-manager/publish.sh        # from the Mac
 ```
 
-Logs: `journalctl -u fpga-manager -f`. LAN: `http://10.0.0.144:8091/manager/`.
-CLI on the Pi: `sudo /usr/local/sbin/fpga-flash switch trng --by kladams`, `/usr/local/sbin/fpga-flash state`.
+Logs: `journalctl -u fpga-manager -f`. LAN: `http://<cm4-ip>:8091/manager/`.
+CLI on the Pi: `sudo /usr/local/sbin/fpga-flash switch trng --by <user>`, `/usr/local/sbin/fpga-flash state`.
 
 ## Public: one site for everything
 
 `fpga.klayshomelab.com` -> homelab-host `cloudflared` tunnel ->
-`http://10.0.0.144:8091` (this daemon, since 2026-11-22; the earlier route went
+`http://<cm4-ip>:8091` (this daemon, since 2026-11-22; the earlier route went
 straight to pvtd :8090, backup `config.yml.bak-fpga-manager`).
 
 - `/manager/`: this page, always available.

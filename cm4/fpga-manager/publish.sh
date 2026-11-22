@@ -8,7 +8,7 @@ set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"; REPO="$(cd "$HERE/../.." && pwd)"
 # bitstreams are gitignored: take them from the main checkout, not a worktree
 BIT_REPO="${BIT_REPO:-$(git -C "$REPO" worktree list --porcelain | sed -n '1s/^worktree //p')}"
-PI="${PI:-kladams@qmtech-cm4.local}"; KEY="${KEY:-$HOME/.ssh/qmtech_cm4}"
+PI="${PI:?set PI=<user>@<cm4-host>}"; KEY="${KEY:?set KEY=<path to the ssh key for the CM4>}"
 STAGE="$(mktemp -d)"; trap 'rm -rf "$STAGE"' EXIT
 python3 -I - "$BIT_REPO" "$HERE/catalog.json" "$STAGE" "${1:-}" <<'PY'
 import hashlib, json, os, shutil, sys

@@ -10,7 +10,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 getent group fpgaq >/dev/null || groupadd --system fpgaq
 id fpgamgr >/dev/null 2>&1 || useradd --system --no-create-home --shell /usr/sbin/nologin fpgamgr
 usermod -aG dialout,plugdev,fpgaq fpgamgr
-usermod -aG fpgaq kladams 2>/dev/null || true
+[ -n "${SUDO_USER:-}" ] && usermod -aG fpgaq "$SUDO_USER" 2>/dev/null || true
 
 # the shared board queue
 install -m 755 "$HERE/fpga-queue" /usr/local/bin/fpga-queue

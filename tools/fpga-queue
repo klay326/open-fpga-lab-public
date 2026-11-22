@@ -6,7 +6,7 @@
 # There is ONE queue, on the CM4 in /var/lib/fpga-queue/. On the Mac this same
 # script forwards every command over ssh when ~/.fpga-board/remote exists
 # (one line: the ssh options and destination, e.g.
-#   -i ~/.ssh/qmtech_cm4 kladams@qmtech-cm4.local).
+#   -i ~/.ssh/<cm4-key> <user>@<cm4-host>).
 # Without that file it uses a local state dir (FPGA_QUEUE_DIR, default
 # /var/lib/fpga-queue if writable, else ~/.fpga-board).
 #
