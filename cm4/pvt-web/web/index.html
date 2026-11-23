@@ -49,6 +49,23 @@ td{padding:5px 0;border-top:1px solid var(--line)}td:not(:first-child),th:not(:f
 .die{width:100%;max-width:260px;display:block;margin:0 auto}
 .dice{font-size:40px;line-height:1;letter-spacing:4px}
 footer{margin-top:26px;font-size:12px;color:var(--mut)}
+@media (max-width:600px){
+ main{padding:16px 10px 40px}
+ h1{font-size:21px}
+ .card{padding:12px;border-radius:10px}
+ .val{font-size:26px}
+ .section>.head{flex-wrap:wrap}
+ .section>.head .pills{width:100%}
+ .rnd{grid-template-columns:1fr!important;justify-items:center}
+ .rnd table{width:100%}
+ .row:has(.seg){flex-wrap:wrap}
+ .seg{flex-wrap:nowrap}.seg button{padding:5px 9px}
+ .row>b{text-align:right}
+ #maprange{white-space:nowrap}.row:has(#maprange){flex-wrap:wrap}
+ td{padding:5px 0 5px 6px}td:first-child{padding-left:0}
+ input[type=number],select,#cin{font-size:16px!important}
+ .dice{font-size:34px}
+}
 </style></head>
 <body><main>
 <header>
@@ -161,7 +178,7 @@ footer{margin-top:26px;font-size:12px;color:var(--mut)}
 <div class="section"><div class="head"><div><h2>Randomness</h2><span class="note">Sixteen free-running rings XORed together and sampled at 50 MHz, with NIST SP 800-90B health tests on chip. These are the raw bits, before any conditioning.</span></div></div>
  <div class="grid g32">
   <div class="card">
-   <div class="grid" style="grid-template-columns:auto minmax(0,1fr);gap:16px;align-items:start">
+   <div class="grid rnd" style="grid-template-columns:auto minmax(0,1fr);gap:16px;align-items:start">
     <div><canvas id="noise" width="128" height="128" style="width:192px;height:192px;image-rendering:pixelated;border-radius:6px;background:var(--soft)"></canvas><div class="note" style="text-align:center">last 16,384 raw bits</div></div>
     <table><tbody>
      <tr><td>Bit rate</td><td id="t-rate">--</td></tr>
@@ -295,7 +312,7 @@ function age(){const s=Math.round((Date.now()-last)/1000);pill('p-age',last&&s<5
 function drawDie(ro,rt){
  const g=$('die'),mut=css('--mut'),line=css('--line'),acc=css('--acc');
  const X=x=>12+x/151*136,Y=y=>188-y/340*176;let h=`<rect x="4" y="4" width="152" height="192" rx="6" fill="none" stroke="${line}" stroke-width="2"/>`;
- h+=`<text x="80" y="140" text-anchor="middle" font-size="9" fill="${mut}">XC7K325T</text>`;
+ h+=`<text x="80" y="186" text-anchor="middle" font-size="9" fill="${mut}">XC7K325T</text>`;
  const ts=rt?rt.filter(v=>v!=null):[];const lo=Math.min(...ts,30),hi=Math.max(...ts,lo+5);
  DIE.forEach(([n,x,y],k)=>{const v=rt&&rt[k]!=null?(rt[k]-lo)/(hi-lo):.5,dead=ro&&ro[k]==null;const r=ro&&!dead?9:6;
   h+=`<circle cx="${X(x)}" cy="${Y(y)}" r="${r}" fill="${acc}" fill-opacity="${ro&&!dead?(.25+.75*v).toFixed(2):.12}"/><text x="${X(x)}" y="${Y(y)+3}" text-anchor="middle" font-size="8" fill="${css('--fg')}">${k}</text>`});
@@ -367,8 +384,11 @@ function drawMap(n){
  const ok=v?v.filter(a=>a!=null):[];const lo=ok.length?Math.min(...ok):0,hi=ok.length?Math.max(...ok):1;
  for(let i=0;i<64;i++){const [row,col]=C(i),X=L+col*cs,Y=T+(7-row)*cs,val=v?v[i]:null;
   x.fillStyle=val==null?css('--soft'):heat(hi>lo?(val-lo)/(hi-lo):.5);x.fillRect(X+1,Y+1,cs-2,cs-2);
-  x.fillStyle=val==null?css('--mut'):'#111';x.textAlign='center';x.font=`${Math.max(9,cs/5.2)}px system-ui`;
-  x.fillText(mhz[i]==null?'dead':val==null?'':fmt(val),X+cs/2,Y+cs/2+4)}
+  x.fillStyle=val==null?css('--mut'):'#111';x.textAlign='center';
+  let s=mhz[i]==null?'dead':val==null?'':fmt(val),fs=Math.max(9,cs/5.2);x.font=`${fs}px system-ui`;
+  if(x.measureText(s).width>cs-4&&val!=null&&Math.abs(val)>=1000)s=Math.round(val/1000)+'k';   // narrow screens: 135709 -> 136k
+  while(fs>7&&x.measureText(s).width>cs-4){fs-=.5;x.font=`${fs}px system-ui`}
+  x.fillText(s,X+cs/2,Y+cs/2+4)}
  x.textAlign='left';x.fillStyle=css('--mut');x.font='10px system-ui';x.save();x.translate(L-8,T+size/2);x.rotate(-Math.PI/2);x.textAlign='center';x.fillText('bottom ← die → top',0,0);x.restore();
  $('maprange').textContent=ok.length?`${fmt(lo)} … ${fmt(hi)} ${unit}`:'';
 }
@@ -438,7 +458,7 @@ function drawWF(){const [x,W,H]=cv('wf');x.fillStyle=css('--mut');if(!WF||!WF.ro
  const all=rows.flatMap(r=>r.db),lo=Math.min(...all),hi=Math.max(...all);
  rows.forEach((r,j)=>{r.db.forEach((v,i)=>{x.fillStyle=heat((v-lo)/((hi-lo)||1));x.fillRect(L+i*cw,j*rh,Math.ceil(cw),Math.ceil(rh))});
   if(r.duty){x.fillStyle=css('--acc');x.fillRect(0,j*rh,6,Math.ceil(rh))}});
- x.fillStyle=css('--mut');const lf=Math.log(WF.f_hi/WF.f_lo);[1e4,3e4,1e5,3e5,1e6,3e6].forEach(f=>{if(f<WF.f_lo||f>WF.f_hi)return;const X=L+Math.log(f/WF.f_lo)/lf*(W-L);x.fillText(fmtHz(f).replace('.0 ',' ').replace('.000 ',' '),Math.min(X,W-40),H-3)});
+ x.fillStyle=css('--mut');const lf=Math.log(WF.f_hi/WF.f_lo);let xe=-1e9;[1e4,3e4,1e5,3e5,1e6,3e6].forEach(f=>{if(f<WF.f_lo||f>WF.f_hi)return;const s=fmtHz(f).replace('.0 ',' ').replace('.000 ',' '),w=x.measureText(s).width,X=Math.min(L+Math.log(f/WF.f_lo)/lf*(W-L),W-w-2);if(X<xe+6)return;x.fillText(s,X,H-3);xe=X+w});
  $('wfnote').textContent=`${rows.length} spectra · ${lo.toFixed(0)} to ${hi.toFixed(0)} dB re 1 tap · orange tick = heater was on`}
 let conSeq=0,conHist=[],conIdx=0;const CK={fpga:'#8da38a',tx:'#d6a55c',xadc:'#7fb6d6',trng:'#b58fd6',event:'#e8efe2',cmd:'#7fd17f',out:'#e8efe2'};
 function conShow(k){return k==='fpga'?$('cf-fpga').checked:k==='xadc'?$('cf-xadc').checked:k==='trng'?$('cf-trng').checked:true}
