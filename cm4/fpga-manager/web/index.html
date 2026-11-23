@@ -149,6 +149,9 @@ function renderNow(){
   const p=S.projects.find(x=>x.id===S.loaded);
   $("cur").textContent=p?p.name:(S.loaded===null?"unknown":S.loaded);
   let info=[];
+  if(S.detected){const r=S.projects.find(x=>x.id===S.recorded.project);
+    info.push(`Detected: ${esc(S.detected.why)}.`);
+    info.push(`<span class="mute">The last web switch loaded ${esc(r?r.name:S.recorded.project||"?")}${S.recorded.since?" at "+hm(S.recorded.since):""}${S.recorded.by?" ("+esc(S.recorded.by)+")":""}; the playground has replaced it since.</span>`)}
   if(S.since)info.push(`since ${hm(S.since)} (<span id="ago">${ago(S.since)}</span> ago), by ${esc(S.by)}`);
   if(S.result&&S.result!=="ok")info.push(`<span class="err">${esc(S.result)}: ${esc(S.message)}</span>`);
   if(S.stale)info.push(`<span style="color:var(--warn)">The board was used by ${esc(S.stale.by)} at ${esc(S.stale.at)} after this; it may hold something else. ${S.stale.note?"Note: "+esc(S.stale.note):""}</span>`);

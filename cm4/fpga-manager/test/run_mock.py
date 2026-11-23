@@ -82,7 +82,13 @@ class FakePvtd(http.server.BaseHTTPRequestHandler):
         pass
 
     def do_GET(self):
-        b = json.dumps(dict(path=self.path, ip=self.headers.get("Cf-Connecting-Ip"))).encode()
+        try:
+            cur = open(os.path.join(T, "loaded")).read().strip()
+        except OSError:
+            cur = ""
+        # the real pvtd hears pvt_lab on serial0 and the TRNG on ttyAMA3 only with the playground
+        src = dict(lab=cur in ("playground", "pvt-lab"), trng=cur == "playground")
+        b = json.dumps(dict(path=self.path, ip=self.headers.get("Cf-Connecting-Ip"), sources=src)).encode()
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(b)))
@@ -212,6 +218,23 @@ try:
     ok(not status()["watch"]["active"], "watchdog idle while someone holds the board")
     queue("release", "someone", "test done, trng still loaded")
     ok("someone" in (status().get("stale") or {}).get("by", ""), "other holder after our switch shown as stale")
+
+    # 3b. someone starts pvtd by hand and it reloads the playground: the page must say so
+    flag = os.path.join(T, "run", "foreign-bitstream")
+    os.remove(flag)
+    open(os.path.join(T, "pvtd.active"), "w").close()
+    open(os.path.join(T, "loaded"), "w").write("playground")
+    time.sleep(5.2)
+    s = status()
+    ok(s["loaded"] == "playground" and s["detected"] and s["recorded"]["project"] == "trng" and not s["stale"],
+       "pvtd reloaded the playground by hand: shown as playground, last switch kept as recorded")
+    open(os.path.join(T, "loaded"), "w").write("pvt-lab")       # pvt-lab mirrors serial0 but has no TRNG
+    time.sleep(5.2)
+    ok(status()["loaded"] == "trng" and not status()["detected"], "pvt-lab's serial0 mirror alone isn't taken for the playground")
+    os.remove(os.path.join(T, "pvtd.active"))                   # back to the state step 4 expects
+    open(os.path.join(T, "loaded"), "w").write("trng")
+    open(flag, "w").close()
+    time.sleep(2.1)
 
     # 4. trng -> pvt-lab, then pvt-lab goes quiet -> watchdog fallback
     time.sleep(1.1)

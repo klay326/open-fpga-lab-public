@@ -187,6 +187,41 @@ class Manager:
         self._pvtd = (v, now)
         return v
 
+    def pvtd_playground(self, max_age=5.0):
+        """Is pvtd running AND hearing the playground (pvt_lab on serial0 plus the
+        TRNG on ttyAMA3)? Only the playground feeds both, and pvtd reloads it by
+        itself within 90 s if the FPGA goes quiet. Cached: status is polled a lot."""
+        now = time.time()
+        c = getattr(self, "_pvtd_pg", None)
+        if c and now - c[1] < max_age:
+            return c[0]
+        v = False
+        if self.pvtd_active():
+            try:
+                cn = http.client.HTTPConnection(self.a.pvtd_host, self.a.pvtd_port, timeout=3)
+                cn.request("GET", "/api/now")
+                src = json.loads(cn.getresponse().read()).get("sources") or {}
+                v = bool(src.get("lab") and src.get("trng"))
+            except (OSError, ValueError, AttributeError):
+                v = False
+        self._pvtd_pg = (v, now)
+        return v
+
+    def detected(self, st, cat):
+        """What's really loaded when it differs from the last web switch: someone
+        started pvtd by hand (or the CM4 rebooted) and pvtd put the playground back."""
+        if self.job:
+            return None
+        byid = {x["id"]: x for x in cat["projects"]}
+        rec = byid.get(st.get("project"))
+        if rec is not None and rec.get("owner") == "pvtd":
+            return None
+        if not self.pvtd_playground():
+            return None
+        fb = [x for x in cat["projects"] if x.get("owner") == "pvtd"]
+        return dict(project=fb[0]["id"] if fb else cat["fallback"],
+                    why="pvtd is running and receiving the playground's lab and TRNG data")
+
     def note(self, msg):
         self.events.appendleft(dict(t=time.time(), msg=msg))
         print(time.strftime("%F %T ") + msg, flush=True)
@@ -430,12 +465,17 @@ class Manager:
         with self.lock:
             job = dict(self.job) if self.job else None
             last = getattr(self, "last_result", None)
+        det = self.detected(st, cat)
+        rec = dict(project=p, since=st.get("since"), by=st.get("by")) if det else None
+        if det:
+            p = det["project"]
         return dict(
             time=time.time(), user=user, projects=pub, fallback=cat["fallback"],
-            loaded=p, since=st.get("since"), by=st.get("by"), result=st.get("result"),
-            message=st.get("message"), job=dict(st.get("job") or {}, **job) if job else None,
+            loaded=p, since=None if det else st.get("since"), by=None if det else st.get("by"),
+            result=None if det else st.get("result"),
+            message=None if det else st.get("message"), detected=det, recorded=rec, job=dict(st.get("job") or {}, **job) if job else None,
             last_result={k: v for k, v in last.items() if k != "output"} if last else None,
-            stale=self.stale(st, log) if p else None,
+            stale=self.stale(st, log) if p and not det else None,
             flag=os.path.exists(self.a.flag),
             pvtd_active=self.pvtd_active(),
             holder=holder, queue=q,
